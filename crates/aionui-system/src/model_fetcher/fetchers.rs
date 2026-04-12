@@ -242,8 +242,10 @@ async fn fetch_bedrock(config: &FetchConfig) -> Result<Vec<ModelInfo>, AppError>
         .map_err(|e| AppError::BadGateway(format!("Bedrock API error: {e}")))?;
 
     let profiles = resp.inference_profile_summaries();
+    // Filter to only anthropic.claude models per API Spec
     let models: Vec<ModelInfo> = profiles
         .iter()
+        .filter(|p| p.inference_profile_id().starts_with("anthropic.claude"))
         .map(|p| ModelInfo::Id(p.inference_profile_id().to_string()))
         .collect();
 

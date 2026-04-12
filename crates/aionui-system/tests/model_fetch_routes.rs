@@ -19,8 +19,8 @@ use aionui_db::{
     SqliteProviderRepository, SqliteSettingsRepository, init_database_memory,
 };
 use aionui_system::{
-    ClientPrefService, ModelFetchService, ProviderService, SettingsService, SystemRouterState,
-    system_routes,
+    ClientPrefService, ModelFetchService, ProtocolDetectionService, ProviderService,
+    SettingsService, SystemRouterState, system_routes,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,12 @@ fn build_state(db: &aionui_db::Database) -> SystemRouterState {
             SqliteClientPreferenceRepository::new(db.pool().clone()),
         )),
         provider_service: ProviderService::new(provider_repo.clone(), TEST_KEY),
-        model_fetch_service: ModelFetchService::new(provider_repo, TEST_KEY, http_client),
+        model_fetch_service: ModelFetchService::new(
+            provider_repo,
+            TEST_KEY,
+            http_client.clone(),
+        ),
+        protocol_detection_service: ProtocolDetectionService::new(http_client),
     }
 }
 

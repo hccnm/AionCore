@@ -5,14 +5,16 @@ use axum::routing::{delete, get, post};
 use axum::Router;
 
 use aionui_api_types::{
-    ApiResponse, ClientPreferencesResponse, CreateProviderRequest, FetchModelsRequest,
-    FetchModelsResponse, ProviderResponse, SystemSettingsResponse,
-    UpdateClientPreferencesRequest, UpdateProviderRequest, UpdateSettingsRequest,
+    ApiResponse, ClientPreferencesResponse, CreateProviderRequest, DetectProtocolRequest,
+    FetchModelsRequest, FetchModelsResponse, ProtocolDetectionResponse, ProviderResponse,
+    SystemSettingsResponse, UpdateClientPreferencesRequest, UpdateProviderRequest,
+    UpdateSettingsRequest,
 };
 use aionui_common::AppError;
 
 use crate::client_pref::ClientPrefService;
 use crate::model_fetcher::ModelFetchService;
+use crate::protocol::ProtocolDetectionService;
 use crate::provider::ProviderService;
 use crate::settings::SettingsService;
 
@@ -23,6 +25,7 @@ pub struct SystemRouterState {
     pub client_pref_service: ClientPrefService,
     pub provider_service: ProviderService,
     pub model_fetch_service: ModelFetchService,
+    pub protocol_detection_service: ProtocolDetectionService,
 }
 
 /// Build the system router (settings + client prefs + providers).
@@ -30,15 +33,16 @@ pub struct SystemRouterState {
 /// All routes require authentication (applied by the caller).
 ///
 /// Endpoints:
-/// - `GET  /api/settings`               — get all backend settings
-/// - `PATCH /api/settings`              — partial update backend settings
-/// - `GET  /api/settings/client`        — get client preferences
-/// - `PUT  /api/settings/client`        — batch update client preferences
-/// - `GET  /api/providers`              — list all providers
-/// - `POST /api/providers`              — create a provider
-/// - `PUT  /api/providers/:id`          — update a provider
-/// - `DELETE /api/providers/:id`        — delete a provider
-/// - `POST /api/providers/:id/models`   — fetch models from remote API
+/// - `GET  /api/settings`                    — get all backend settings
+/// - `PATCH /api/settings`                   — partial update backend settings
+/// - `GET  /api/settings/client`             — get client preferences
+/// - `PUT  /api/settings/client`             — batch update client preferences
+/// - `GET  /api/providers`                   — list all providers
+/// - `POST /api/providers`                   — create a provider
+/// - `PUT  /api/providers/:id`               — update a provider
+/// - `DELETE /api/providers/:id`             — delete a provider
+/// - `POST /api/providers/:id/models`        — fetch models from remote API
+/// - `POST /api/providers/detect-protocol`   — detect API protocol
 pub fn system_routes(state: SystemRouterState) -> Router {
     Router::new()
         .route("/api/settings", get(get_settings).patch(update_settings))
@@ -47,6 +51,7 @@ pub fn system_routes(state: SystemRouterState) -> Router {
             get(get_client_preferences).put(update_client_preferences),
         )
         .route("/api/providers", get(list_providers).post(create_provider))
+        .route("/api/providers/detect-protocol", post(detect_protocol))
         .route(
             "/api/providers/{id}",
             delete(delete_provider).put(update_provider),
@@ -165,5 +170,17 @@ async fn fetch_models(
 ) -> Result<Json<ApiResponse<FetchModelsResponse>>, AppError> {
     let Json(req) = body.map_err(|e| AppError::BadRequest(e.to_string()))?;
     let result = state.model_fetch_service.fetch_models(&id, &req).await?;
+    Ok(Json(ApiResponse::ok(result)))
+}
+
+async fn detect_protocol(
+    State(state): State<SystemRouterState>,
+    body: Result<Json<DetectProtocolRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<ProtocolDetectionResponse>>, AppError> {
+    let Json(req) = body.map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let result = state
+        .protocol_detection_service
+        .detect_protocol(&req)
+        .await?;
     Ok(Json(ApiResponse::ok(result)))
 }

@@ -133,7 +133,7 @@ fn test_app_error_status_codes() {
     );
     assert_eq!(
         AppError::Timeout("x".into()).status_code(),
-        StatusCode::REQUEST_TIMEOUT
+        StatusCode::BAD_GATEWAY
     );
 }
 

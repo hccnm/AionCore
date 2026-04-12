@@ -16,8 +16,8 @@ use aionui_db::{
     init_database_memory,
 };
 use aionui_system::{
-    ClientPrefService, ModelFetchService, ProviderService, SettingsService, SystemRouterState,
-    settings_routes,
+    ClientPrefService, ModelFetchService, ProtocolDetectionService, ProviderService,
+    SettingsService, SystemRouterState, settings_routes,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,8 +40,9 @@ fn build_state(db: &aionui_db::Database) -> SystemRouterState {
         model_fetch_service: ModelFetchService::new(
             provider_repo,
             TEST_ENCRYPTION_KEY,
-            http_client,
+            http_client.clone(),
         ),
+        protocol_detection_service: ProtocolDetectionService::new(http_client),
     }
 }
 

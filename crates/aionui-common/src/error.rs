@@ -53,7 +53,7 @@ impl AppError {
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::BadGateway(_) => StatusCode::BAD_GATEWAY,
-            Self::Timeout(_) => StatusCode::REQUEST_TIMEOUT,
+            Self::Timeout(_) => StatusCode::BAD_GATEWAY,
         }
     }
 
@@ -126,7 +126,7 @@ mod tests {
         );
         assert_eq!(
             AppError::Timeout("x".into()).status_code(),
-            StatusCode::REQUEST_TIMEOUT
+            StatusCode::BAD_GATEWAY
         );
     }
 
