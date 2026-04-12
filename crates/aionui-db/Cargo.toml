@@ -5,5 +5,11 @@ edition.workspace = true
 
 [dependencies]
 aionui-common.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["migrate"] }
 serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tempfile = "3"

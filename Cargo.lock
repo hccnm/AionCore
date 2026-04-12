@@ -201,6 +201,10 @@ dependencies = [
  "aionui-common",
  "serde",
  "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
