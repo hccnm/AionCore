@@ -99,7 +99,7 @@ impl ProtocolDetectionService {
                     fixed_base_url,
                     confidence,
                 }) => {
-                    let suggestion = success_suggestion(*protocol);
+                    let suggestion = success_suggestion(*protocol, req.preferred_protocol);
                     let multi_key_result = if req.test_all_keys && keys.len() > 1 {
                         let effective =
                             fixed_base_url.as_deref().unwrap_or(&req.base_url);
@@ -457,11 +457,27 @@ fn protocol_display_name(protocol: ProtocolType) -> &'static str {
     }
 }
 
-fn success_suggestion(protocol: ProtocolType) -> DetectionSuggestion {
-    DetectionSuggestion {
-        suggestion_type: SuggestionType::None,
-        message: format!("Detected {} protocol", protocol_display_name(protocol)),
-        i18n_key: Some("settings.protocolDetected".into()),
+fn success_suggestion(
+    detected: ProtocolType,
+    preferred: Option<ProtocolType>,
+) -> DetectionSuggestion {
+    let should_switch = matches!(preferred, Some(p) if p != ProtocolType::Unknown && p != detected);
+    if should_switch {
+        DetectionSuggestion {
+            suggestion_type: SuggestionType::SwitchPlatform,
+            message: format!(
+                "Detected {} protocol, but preferred was {}",
+                protocol_display_name(detected),
+                protocol_display_name(preferred.unwrap_or(ProtocolType::Unknown)),
+            ),
+            i18n_key: Some("settings.protocolMismatch".into()),
+        }
+    } else {
+        DetectionSuggestion {
+            suggestion_type: SuggestionType::None,
+            message: format!("Detected {} protocol", protocol_display_name(detected)),
+            i18n_key: Some("settings.protocolDetected".into()),
+        }
     }
 }
 
@@ -729,10 +745,30 @@ mod tests {
     // -- suggestion helpers --
 
     #[test]
-    fn success_suggestion_has_none_type() {
-        let s = success_suggestion(ProtocolType::Anthropic);
+    fn success_suggestion_no_preferred() {
+        let s = success_suggestion(ProtocolType::Anthropic, None);
         assert_eq!(s.suggestion_type, SuggestionType::None);
         assert!(s.message.contains("Anthropic"));
+    }
+
+    #[test]
+    fn success_suggestion_same_preferred() {
+        let s = success_suggestion(ProtocolType::Anthropic, Some(ProtocolType::Anthropic));
+        assert_eq!(s.suggestion_type, SuggestionType::None);
+    }
+
+    #[test]
+    fn success_suggestion_different_preferred_returns_switch() {
+        let s = success_suggestion(ProtocolType::OpenAI, Some(ProtocolType::Anthropic));
+        assert_eq!(s.suggestion_type, SuggestionType::SwitchPlatform);
+        assert!(s.message.contains("OpenAI"));
+        assert!(s.message.contains("Anthropic"));
+    }
+
+    #[test]
+    fn success_suggestion_unknown_preferred_is_ignored() {
+        let s = success_suggestion(ProtocolType::Anthropic, Some(ProtocolType::Unknown));
+        assert_eq!(s.suggestion_type, SuggestionType::None);
     }
 
     #[test]

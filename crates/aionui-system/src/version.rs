@@ -79,29 +79,60 @@ impl VersionCheckService {
         }
     }
 
-    /// Fetch all releases from GitHub API.
+    /// Fetch releases from GitHub API with pagination.
+    ///
+    /// Requests up to 100 releases per page (GitHub max). For most repositories
+    /// a single page is sufficient, but we follow `Link: <..>; rel="next"` headers
+    /// to collect additional pages (up to 5 pages / 500 releases).
     async fn fetch_releases(&self, repo: &str) -> Result<Vec<GitHubRelease>, AppError> {
-        let url = format!("{}/repos/{repo}/releases", self.api_base);
-        let resp = self
-            .http_client
-            .get(&url)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "aionui-backend")
-            .send()
-            .await
-            .map_err(|e| AppError::BadGateway(format!("GitHub API request failed: {e}")))?;
+        const PER_PAGE: u32 = 100;
+        const MAX_PAGES: u32 = 5;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::BadGateway(format!(
-                "GitHub API returned {status}: {body}"
-            )));
+        let mut all_releases = Vec::new();
+        let mut page = 1u32;
+
+        loop {
+            let url = format!(
+                "{}/repos/{repo}/releases?per_page={PER_PAGE}&page={page}",
+                self.api_base
+            );
+            let resp = self
+                .http_client
+                .get(&url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "aionui-backend")
+                .send()
+                .await
+                .map_err(|e| AppError::BadGateway(format!("GitHub API request failed: {e}")))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(AppError::BadGateway(format!(
+                    "GitHub API returned {status}: {body}"
+                )));
+            }
+
+            let has_next = resp
+                .headers()
+                .get("link")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.contains("rel=\"next\""));
+
+            let batch: Vec<GitHubRelease> = resp.json().await.map_err(|e| {
+                AppError::BadGateway(format!("Failed to parse GitHub releases: {e}"))
+            })?;
+
+            let batch_len = batch.len();
+            all_releases.extend(batch);
+
+            page += 1;
+            if !has_next || batch_len < PER_PAGE as usize || page > MAX_PAGES {
+                break;
+            }
         }
 
-        resp.json::<Vec<GitHubRelease>>()
-            .await
-            .map_err(|e| AppError::BadGateway(format!("Failed to parse GitHub releases: {e}")))
+        Ok(all_releases)
     }
 }
 

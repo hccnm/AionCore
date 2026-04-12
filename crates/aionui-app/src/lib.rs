@@ -1,14 +1,23 @@
 use std::sync::Arc;
 
+use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::{Json, Router, middleware};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use aionui_auth::{
-    AuthRouterState, CookieConfig, JwtService, QrTokenStore, auth_routes, csrf_middleware,
-    resolve_jwt_secret, security_headers_middleware,
+    AuthRouterState, AuthState, CookieConfig, JwtService, QrTokenStore, auth_middleware,
+    auth_routes, csrf_middleware, resolve_jwt_secret, security_headers_middleware,
 };
-use aionui_db::{Database, IUserRepository, SqliteUserRepository};
+use aionui_db::{
+    Database, IUserRepository, SqliteClientPreferenceRepository, SqliteProviderRepository,
+    SqliteSettingsRepository, SqliteUserRepository,
+};
+use aionui_system::{
+    ClientPrefService, ModelFetchService, ProtocolDetectionService, ProviderService,
+    SettingsService, SystemRouterState, VersionCheckService, system_routes,
+};
 
 /// Application configuration parsed from CLI arguments.
 #[derive(Debug, Clone)]
@@ -47,6 +56,8 @@ pub struct AppServices {
     pub user_repo: Arc<dyn IUserRepository>,
     pub cookie_config: Arc<CookieConfig>,
     pub qr_token_store: Arc<QrTokenStore>,
+    /// Raw JWT secret string, used to derive encryption keys.
+    pub jwt_secret_raw: String,
 }
 
 impl AppServices {
@@ -85,10 +96,11 @@ impl AppServices {
 
         Ok(Self {
             database,
-            jwt_service: Arc::new(JwtService::new(secret)),
+            jwt_service: Arc::new(JwtService::new(secret.clone())),
             user_repo,
             cookie_config: Arc::new(CookieConfig::from_env()),
             qr_token_store: Arc::new(QrTokenStore::new()),
+            jwt_secret_raw: secret,
         })
     }
 }
@@ -102,13 +114,64 @@ async fn health_check() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
+/// Derive a 32-byte encryption key from the JWT secret using SHA-256.
+pub fn derive_encryption_key(jwt_secret: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"aionui-encryption-key:");
+    hasher.update(jwt_secret.as_bytes());
+    hasher.finalize().into()
+}
+
+/// Build the default `SystemRouterState` from application services.
+///
+/// Tests can call this and override individual fields before passing
+/// to [`create_router_with_system_state`].
+pub fn build_system_state(services: &AppServices) -> SystemRouterState {
+    let encryption_key = derive_encryption_key(&services.jwt_secret_raw);
+    let pool = services.database.pool().clone();
+    let provider_repo = Arc::new(SqliteProviderRepository::new(pool.clone()));
+    let http_client = reqwest::Client::new();
+
+    SystemRouterState {
+        settings_service: SettingsService::new(Arc::new(SqliteSettingsRepository::new(
+            pool.clone(),
+        ))),
+        client_pref_service: ClientPrefService::new(Arc::new(
+            SqliteClientPreferenceRepository::new(pool),
+        )),
+        provider_service: ProviderService::new(provider_repo.clone(), encryption_key),
+        model_fetch_service: ModelFetchService::new(
+            provider_repo,
+            encryption_key,
+            http_client.clone(),
+        ),
+        protocol_detection_service: ProtocolDetectionService::new(http_client.clone()),
+        version_check_service: VersionCheckService::new(
+            http_client,
+            env!("CARGO_PKG_VERSION").to_owned(),
+        ),
+    }
+}
+
 /// Create the application router with all routes and global middleware.
 ///
 /// Middleware stack (outermost → innermost):
 /// 1. Security response headers (X-Frame-Options, etc.)
 /// 2. CSRF protection (Double Submit Cookie)
-/// 3. Route handlers (auth routes + health check)
+/// 3. Route handlers (auth routes + system routes + health check)
 pub fn create_router(services: &AppServices) -> Router {
+    let system_state = build_system_state(services);
+    create_router_with_system_state(services, system_state)
+}
+
+/// Create the application router with a custom system state.
+///
+/// Used for testing when specific service overrides are needed
+/// (e.g. injecting a mock HTTP server URL for version check).
+pub fn create_router_with_system_state(
+    services: &AppServices,
+    system_state: SystemRouterState,
+) -> Router {
     let auth_state = AuthRouterState {
         jwt_service: services.jwt_service.clone(),
         user_repo: services.user_repo.clone(),
@@ -116,9 +179,19 @@ pub fn create_router(services: &AppServices) -> Router {
         qr_token_store: services.qr_token_store.clone(),
     };
 
+    let auth_mw_state = AuthState {
+        jwt_service: services.jwt_service.clone(),
+        user_repo: services.user_repo.clone(),
+    };
+
+    // System routes protected by auth middleware
+    let system_authenticated = system_routes(system_state)
+        .route_layer(from_fn_with_state(auth_mw_state, auth_middleware));
+
     Router::new()
         .route("/health", get(health_check))
         .merge(auth_routes(auth_state))
+        .merge(system_authenticated)
         .layer(middleware::from_fn_with_state(
             services.cookie_config.clone(),
             csrf_middleware,
