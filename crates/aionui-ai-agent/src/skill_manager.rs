@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+static LOAD_SKILL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[LOAD_SKILL:\s*([^\]]+)\]").expect("valid regex"));
 
 /// A discovered skill definition.
 #[derive(Debug, Clone)]
@@ -184,8 +187,8 @@ pub fn build_skills_index_text(skills: &[SkillIndex]) -> String {
 ///
 /// Returns a list of requested skill names.
 pub fn detect_skill_load_request(content: &str) -> Vec<String> {
-    let re = Regex::new(r"\[LOAD_SKILL:\s*([^\]]+)\]").expect("valid regex");
-    re.captures_iter(content)
+    LOAD_SKILL_RE
+        .captures_iter(content)
         .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
         .filter(|name| !name.is_empty())
         .collect()
