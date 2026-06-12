@@ -1,0 +1,12 @@
+[
+  "根据这个 PRD 做一个订单中心后台原型，覆盖首页总览、订单列表、审核详情和批量操作 flow。",
+  "做一个 AI 番茄钟 iOS 原型，4 个核心屏，真实可点击，重点展示专注开始、进行中、结束复盘。",
+  "根据这份 PRD 做一个 CRM Web 原型，默认无壳，包含客户列表、详情抽屉、编辑保存 flow。",
+  "根据这份 PRD 做一个官网内的产品 workspace 原型，需要强调浏览器中的产品感，可以带浏览器壳。",
+  "做一个习惯养成 App onboarding 原型，3 步 flow demo，最后一屏能完成目标创建。",
+  "做一个 SaaS analytics dashboard 原型，先 overview 平铺，再给核心筛选 flow 的 clickable demo。",
+  "参考现有产品视觉语汇，做一个设置页重构原型，保留品牌调性但优化信息架构。",
+  "这是一个 init 任务。读取这些 PRD 并输出到指定 prototype 目录，生成第一版原型并更新 prototype.json。",
+  "这是一个 add 任务。基于已有 prototype 目录读取新增 PRD，只新增或修改受影响页面。",
+  "这是一个 update 任务。基于已有 prototype 目录读取更新后的 PRD，只更新受影响页面并同步 prototype.json。"
+]

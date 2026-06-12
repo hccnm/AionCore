@@ -1,0 +1,4 @@
+interface:
+  display_name: "Interactive Prototype"
+  short_description: "从 PRD 或自然语言生成可点击的 App / Web HTML 原型"
+  default_prompt: "Use $interactive-prototype to generate or maintain self-contained interactive HTML prototypes from natural language or PRD files."

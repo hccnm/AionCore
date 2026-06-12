@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Prototype Demo · iOS Flow</title>
+  <link rel="icon" href="data:," />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #efece5; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      color: #161512;
+    }
+    button { font: inherit; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const iosFrameStyles = {
+      wrapper: {
+        display: 'inline-block',
+        padding: 12,
+        background: '#000',
+        borderRadius: 60,
+        boxShadow: '0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)',
+        position: 'relative',
+      },
+      screen: {
+        position: 'relative',
+        borderRadius: 48,
+        overflow: 'hidden',
+        background: '#fff',
+      },
+      statusBar: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 54,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 32px',
+        fontSize: 16,
+        fontWeight: 600,
+        fontFamily: '-apple-system, "SF Pro Text", sans-serif',
+        zIndex: 20,
+        pointerEvents: 'none',
+      },
+      dynamicIsland: {
+        position: 'absolute',
+        top: 12,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 124,
+        height: 36,
+        background: '#000',
+        borderRadius: 999,
+        zIndex: 30,
+      },
+      content: {
+        position: 'absolute',
+        top: 54,
+        left: 0,
+        right: 0,
+        bottom: 34,
+        overflow: 'auto',
+      },
+      homeIndicator: {
+        position: 'absolute',
+        bottom: 10,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 140,
+        height: 5,
+        background: 'rgba(0,0,0,0.3)',
+        borderRadius: 999,
+        zIndex: 10,
+      },
+    };
+
+    function IosFrame({ children, width = 393, height = 852, time = '9:41', battery = 87 }) {
+      return (
+        <div style={iosFrameStyles.wrapper}>
+          <div style={{ ...iosFrameStyles.screen, width, height, background: '#f6f1e8' }}>
+            <div style={{ ...iosFrameStyles.statusBar, color: '#171411' }}>
+              <span>{time}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>5G</span>
+                <span>{battery}%</span>
+              </div>
+            </div>
+            <div style={iosFrameStyles.dynamicIsland} />
+            <div style={iosFrameStyles.content}>{children}</div>
+            <div style={iosFrameStyles.homeIndicator} />
+          </div>
+        </div>
+      );
+    }
+
+    const demoStyles = {
+      shell: {
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        padding: 40,
+        background: 'radial-gradient(circle at top left, #faf6ee 0%, #ece6da 100%)',
+      },
+      phoneStage: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 32,
+      },
+      notes: {
+        width: 320,
+        padding: 24,
+        borderRadius: 24,
+        background: 'rgba(255,255,255,0.72)',
+        boxShadow: '0 20px 50px rgba(0,0,0,0.08)',
+      },
+      screen: {
+        minHeight: '100%',
+        padding: '28px 22px 24px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 18,
+      },
+      eyebrow: {
+        fontSize: 12,
+        letterSpacing: '0.12em',
+        color: '#7c7468',
+        textTransform: 'uppercase',
+      },
+      title: {
+        fontSize: 28,
+        lineHeight: 1.05,
+        fontWeight: 700,
+        margin: 0,
+      },
+      card: {
+        borderRadius: 24,
+        padding: 18,
+        background: 'rgba(255,255,255,0.78)',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
+      },
+      primaryButton: {
+        border: 0,
+        borderRadius: 18,
+        padding: '16px 18px',
+        background: '#1d5f4b',
+        color: '#fff',
+        fontWeight: 700,
+        cursor: 'pointer',
+        minHeight: 48,
+      },
+      secondaryButton: {
+        border: '1px solid rgba(22,21,18,0.12)',
+        borderRadius: 18,
+        padding: '14px 16px',
+        background: '#fff',
+        color: '#171411',
+        fontWeight: 600,
+        cursor: 'pointer',
+        minHeight: 48,
+      },
+      tabBar: {
+        marginTop: 'auto',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 8,
+        padding: 6,
+        borderRadius: 20,
+        background: 'rgba(255,255,255,0.85)',
+      },
+      tab: active => ({
+        border: 0,
+        borderRadius: 16,
+        minHeight: 44,
+        background: active ? '#171411' : 'transparent',
+        color: active ? '#fff' : '#6c655b',
+        fontWeight: 600,
+        cursor: 'pointer',
+      }),
+    };
+
+    function ScreenHome({ onStart, onInsights }) {
+      return (
+        <div style={demoStyles.screen}>
+          <div>
+            <div style={demoStyles.eyebrow}>Focus Garden</div>
+            <h1 style={demoStyles.title}>把今天最重要的一件事，种下来。</h1>
+          </div>
+          <div style={demoStyles.card}>
+            <div style={{ fontSize: 13, color: '#80786d', marginBottom: 10 }}>今日重点</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>写完产品原型第一版</div>
+            <div style={{ color: '#6b645a', lineHeight: 1.5 }}>系统建议先完成一轮 25 分钟专注，再做复盘。</div>
+          </div>
+          <button data-testid="open-session" style={demoStyles.primaryButton} onClick={onStart}>
+            开始 25 分钟专注
+          </button>
+          <button data-testid="open-insights" style={demoStyles.secondaryButton} onClick={onInsights}>
+            查看本周洞察
+          </button>
+        </div>
+      );
+    }
+
+    function ScreenSession({ onComplete }) {
+      return (
+        <div style={demoStyles.screen}>
+          <div>
+            <div style={demoStyles.eyebrow}>Session Running</div>
+            <h1 style={demoStyles.title}>25:00</h1>
+          </div>
+          <div style={{ ...demoStyles.card, background: '#1d5f4b', color: '#fff' }}>
+            <div style={{ opacity: 0.72, marginBottom: 10 }}>当前专注任务</div>
+            <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>写完产品原型第一版</div>
+            <div style={{ opacity: 0.84 }}>已进入勿扰模式，结束后会自动进入复盘。</div>
+          </div>
+          <div style={{ ...demoStyles.card, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ color: '#8a8377', fontSize: 13 }}>专注计数</div>
+              <div style={{ fontWeight: 700, fontSize: 20 }}>03 / 04</div>
+            </div>
+            <div>
+              <div style={{ color: '#8a8377', fontSize: 13 }}>建议节奏</div>
+              <div style={{ fontWeight: 700, fontSize: 20 }}>深度写作</div>
+            </div>
+          </div>
+          <button data-testid="complete-session" style={demoStyles.primaryButton} onClick={onComplete}>
+            提前完成并复盘
+          </button>
+        </div>
+      );
+    }
+
+    function ScreenReview({ onBackHome }) {
+      return (
+        <div style={demoStyles.screen}>
+          <div>
+            <div style={demoStyles.eyebrow}>Reflection</div>
+            <h1 style={demoStyles.title}>这轮专注收获了什么？</h1>
+          </div>
+          <div style={{ ...demoStyles.card, display: 'grid', gap: 12 }}>
+            <div>
+              <div style={{ color: '#8a8377', fontSize: 13 }}>完成度</div>
+              <div style={{ fontWeight: 700, fontSize: 20 }}>80% · 主 flow 已跑通</div>
+            </div>
+            <div>
+              <div style={{ color: '#8a8377', fontSize: 13 }}>系统建议</div>
+              <div style={{ lineHeight: 1.5 }}>下一轮把设置和异常态补齐，然后再做浏览器原型。</div>
+            </div>
+          </div>
+          <button data-testid="back-home" style={demoStyles.primaryButton} onClick={onBackHome}>
+            回到首页
+          </button>
+        </div>
+      );
+    }
+
+    function ScreenInsights() {
+      return (
+        <div style={demoStyles.screen}>
+          <div>
+            <div style={demoStyles.eyebrow}>Weekly Insights</div>
+            <h1 style={demoStyles.title}>你在上午 09:00-11:00 的专注质量最高。</h1>
+          </div>
+          <div style={{ ...demoStyles.card, display: 'grid', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>平均进入专注速度</span>
+              <strong>2 分 12 秒</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>最稳的时段</span>
+              <strong>周二上午</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>建议模式</span>
+              <strong>先写作，后沟通</strong>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [screen, setScreen] = React.useState('home');
+      const [tab, setTab] = React.useState('focus');
+
+      const content = (() => {
+        if (screen === 'session') return <ScreenSession onComplete={() => setScreen('review')} />;
+        if (screen === 'review') return <ScreenReview onBackHome={() => setScreen('home')} />;
+        if (screen === 'insights') return <ScreenInsights />;
+        return <ScreenHome onStart={() => setScreen('session')} onInsights={() => setScreen('insights')} />;
+      })();
+
+      return (
+        <div style={demoStyles.shell}>
+          <div style={demoStyles.phoneStage}>
+            <IosFrame>
+              <div style={{ ...demoStyles.screen, paddingBottom: 12 }}>
+                {content}
+                <div style={demoStyles.tabBar}>
+                  <button style={demoStyles.tab(tab === 'focus')} onClick={() => { setTab('focus'); setScreen('home'); }}>
+                    Focus
+                  </button>
+                  <button data-testid="tab-history" style={demoStyles.tab(tab === 'history')} onClick={() => { setTab('history'); setScreen('review'); }}>
+                    History
+                  </button>
+                  <button style={demoStyles.tab(tab === 'insights')} onClick={() => { setTab('insights'); setScreen('insights'); }}>
+                    Insights
+                  </button>
+                </div>
+              </div>
+            </IosFrame>
+
+            <div style={demoStyles.notes}>
+              <div style={{ ...demoStyles.eyebrow, marginBottom: 10 }}>Demo Notes</div>
+              <h2 style={{ margin: '0 0 12px', fontSize: 24 }}>Prototype-only 包示例</h2>
+              <p style={{ margin: '0 0 12px', lineHeight: 1.6, color: '#5e574d' }}>
+                这个 demo 演示了单壳体 flow demo：Home → Session → Review，以及 tab 切换。
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18, color: '#5e574d', lineHeight: 1.7 }}>
+                <li>单文件 HTML</li>
+                <li>真实点击 flow</li>
+                <li>轻动效和设备壳</li>
+                <li>可用 Playwright 跑点击烟测</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

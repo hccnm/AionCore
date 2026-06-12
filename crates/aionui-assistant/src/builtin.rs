@@ -278,31 +278,29 @@ mod tests {
     #[test]
     fn load_embedded_has_expected_builtins() {
         let reg = BuiltinAssistantRegistry::load_embedded();
-        assert!(!reg.is_empty(), "embedded registry should contain the shipped presets");
-        // Sanity-check a couple of known ids from the committed manifest.
-        assert!(reg.has("word-creator"));
-        assert!(reg.has("cowork"));
+        assert_eq!(reg.len(), 1, "MVP ships a single system assistant");
+        assert!(reg.has("ai-product-manager"));
     }
 
     #[test]
     fn load_embedded_rule_bytes_available_for_shipped_preset() {
         let reg = BuiltinAssistantRegistry::load_embedded();
         let bytes = reg
-            .rule_bytes("word-creator", "en-US")
-            .expect("shipped word-creator en-US rule should resolve from the embedded bundle");
+            .rule_bytes("ai-product-manager", "en-US")
+            .expect("shipped AI PM en-US rule should resolve from the embedded bundle");
         assert!(!bytes.is_empty());
         let text = std::str::from_utf8(&bytes).expect("rule file should be valid utf-8");
-        assert!(text.len() > 100, "rule file should have real content");
+        assert!(text.contains("Decision Packet"));
     }
 
     #[test]
-    fn load_embedded_skill_bytes_available_for_cowork() {
-        // cowork is one of the three presets that ships a skill_file too.
+    fn load_embedded_skill_bytes_available_for_ai_pm() {
         let reg = BuiltinAssistantRegistry::load_embedded();
         let bytes = reg
-            .skill_bytes("cowork", "en-US")
-            .expect("cowork en-US skill should resolve from the embedded bundle");
-        assert!(!bytes.is_empty());
+            .skill_bytes("ai-product-manager", "en-US")
+            .expect("AI PM en-US skill usage should resolve from the embedded bundle");
+        let text = std::str::from_utf8(&bytes).expect("skill file should be valid utf-8");
+        assert!(text.contains("interactive-prototype"));
     }
 
     #[test]
@@ -310,7 +308,7 @@ mod tests {
         let reg = BuiltinAssistantRegistry::load_embedded();
         // The manifest declares rule_file as "rules/{id}.{locale}.md"; a
         // made-up locale can't resolve.
-        assert!(reg.rule_bytes("word-creator", "xx-YY").is_none());
+        assert!(reg.rule_bytes("ai-product-manager", "xx-YY").is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -429,8 +427,7 @@ mod tests {
     #[test]
     fn avatar_asset_is_none_for_emoji_avatar() {
         let reg = BuiltinAssistantRegistry::load_embedded();
-        // word-creator ships with avatar: "📝" in the manifest.
-        assert!(reg.avatar_asset("word-creator").is_none());
+        assert!(reg.avatar_asset("ai-product-manager").is_none());
     }
 
     #[test]

@@ -1,0 +1,411 @@
+<!--
+  Backend scaffold for backend mode.
+  1. Inline the style block and shell markup into the final HTML.
+  2. Inline assets/backend_runtime.js before </body>.
+  3. Fill the {{...}} placeholders and compose sections with the backend_*_section snippets.
+-->
+<style>
+  :root {
+    --ip-bg: #f3f5f8;
+    --ip-panel: #ffffff;
+    --ip-panel-soft: #f7f8fb;
+    --ip-border: #d8deea;
+    --ip-border-strong: #bfc9da;
+    --ip-text: #18202c;
+    --ip-text-soft: #5d6b82;
+    --ip-primary: #2457f5;
+    --ip-primary-soft: #e8eeff;
+    --ip-success: #1e9d67;
+    --ip-warning: #db8b17;
+    --ip-danger: #d14343;
+    --ip-shadow: 0 20px 48px rgba(19, 33, 68, 0.08);
+    --ip-radius: 20px;
+    --ip-radius-sm: 12px;
+    --ip-sidebar-width: 248px;
+    color-scheme: light;
+    font-family: "Segoe UI", "PingFang SC", "Helvetica Neue", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: linear-gradient(180deg, #eef2f8 0%, #f7f9fc 100%);
+    color: var(--ip-text);
+  }
+
+  .ip-shell {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: var(--ip-sidebar-width) minmax(0, 1fr);
+  }
+
+  .ip-sidebar {
+    padding: 28px 20px;
+    background: #111827;
+    color: rgba(255, 255, 255, 0.92);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .ip-brand {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .ip-sidebar-meta {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.58);
+    line-height: 1.6;
+  }
+
+  .ip-nav {
+    display: grid;
+    gap: 8px;
+  }
+
+  .ip-nav-item {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 12px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 160ms ease, transform 160ms ease;
+  }
+
+  .ip-nav-item.is-active,
+  .ip-nav-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateX(2px);
+  }
+
+  .ip-main {
+    min-width: 0;
+    padding: 28px;
+    display: grid;
+    gap: 20px;
+  }
+
+  .ip-header {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(216, 222, 234, 0.7);
+    border-radius: var(--ip-radius);
+    box-shadow: var(--ip-shadow);
+    padding: 22px 24px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .ip-header h1,
+  .ip-section-title {
+    margin: 0;
+    font-size: 26px;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+
+  .ip-subtitle,
+  .ip-note {
+    margin: 8px 0 0;
+    color: var(--ip-text-soft);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .ip-actions,
+  .ip-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .ip-content {
+    min-width: 0;
+    display: grid;
+    gap: 20px;
+  }
+
+  .ip-grid-2,
+  .ip-grid-3,
+  .ip-kpis {
+    min-width: 0;
+    display: grid;
+    gap: 16px;
+  }
+
+  .ip-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ip-grid-3,
+  .ip-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  .ip-card,
+  .ip-kpi {
+    min-width: 0;
+    background: var(--ip-panel);
+    border: 1px solid rgba(216, 222, 234, 0.9);
+    border-radius: var(--ip-radius);
+    box-shadow: var(--ip-shadow);
+    padding: 20px;
+  }
+
+  .ip-kpi-label {
+    color: var(--ip-text-soft);
+    font-size: 13px;
+  }
+
+  .ip-kpi-value {
+    margin-top: 10px;
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+
+  .ip-kpi-trend {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--ip-success);
+  }
+
+  .ip-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  .ip-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .ip-chip,
+  .ip-input,
+  .ip-select,
+  .ip-field {
+    min-height: 42px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid var(--ip-border);
+    background: var(--ip-panel-soft);
+    color: var(--ip-text);
+    font-size: 14px;
+  }
+
+  .ip-field {
+    padding: 12px 14px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .ip-field-label {
+    font-size: 12px;
+    color: var(--ip-text-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .ip-btn {
+    min-height: 42px;
+    padding: 0 16px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+  }
+
+  .ip-btn:hover { transform: translateY(-1px); }
+  .ip-btn-primary {
+    background: var(--ip-primary);
+    color: #fff;
+    box-shadow: 0 12px 24px rgba(36, 87, 245, 0.2);
+  }
+  .ip-btn-secondary {
+    background: var(--ip-panel-soft);
+    border-color: var(--ip-border);
+    color: var(--ip-text);
+  }
+  .ip-btn-danger {
+    background: #fff4f4;
+    color: var(--ip-danger);
+    border-color: #f4cccc;
+  }
+
+  .ip-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+    font-size: 14px;
+  }
+
+  .ip-table-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid #e8edf5;
+    border-radius: 18px;
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ip-table th,
+  .ip-table td {
+    text-align: left;
+    padding: 14px 12px;
+    border-bottom: 1px solid #e8edf5;
+    vertical-align: top;
+    white-space: nowrap;
+  }
+
+  .ip-table th {
+    font-size: 12px;
+    color: var(--ip-text-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .ip-table tbody tr:hover {
+    background: #f8faff;
+  }
+
+  .ip-tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--ip-primary-soft);
+    color: var(--ip-primary);
+  }
+
+  .ip-tag-success { background: #e8f7ef; color: var(--ip-success); }
+  .ip-tag-warning { background: #fff2df; color: var(--ip-warning); }
+  .ip-tag-danger { background: #ffe7e7; color: var(--ip-danger); }
+
+  .ip-tabs {
+    padding: 6px;
+    background: var(--ip-panel-soft);
+    border-radius: 14px;
+    width: fit-content;
+  }
+
+  .ip-tab {
+    border: 0;
+    background: transparent;
+    color: var(--ip-text-soft);
+    min-height: 38px;
+    padding: 0 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .ip-tab.is-active {
+    background: #fff;
+    color: var(--ip-text);
+    box-shadow: 0 8px 18px rgba(19, 33, 68, 0.08);
+  }
+
+  .ip-layer {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 16, 28, 0.36);
+    display: flex;
+    justify-content: flex-end;
+    padding: 24px;
+    z-index: 50;
+  }
+
+  .ip-drawer,
+  .ip-modal {
+    background: #fff;
+    border-radius: 24px;
+    box-shadow: 0 28px 70px rgba(12, 19, 34, 0.2);
+  }
+
+  .ip-drawer {
+    width: min(480px, 100%);
+    height: 100%;
+    padding: 24px;
+    overflow: auto;
+  }
+
+  .ip-modal {
+    width: min(560px, calc(100vw - 48px));
+    margin: auto;
+    padding: 24px;
+  }
+
+  .ip-toast-stack {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    display: grid;
+    gap: 10px;
+    z-index: 80;
+  }
+
+  .ip-toast {
+    padding: 12px 16px;
+    border-radius: 14px;
+    background: rgba(17, 24, 39, 0.92);
+    color: #fff;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+  }
+
+  .is-hidden { display: none !important; }
+
+  @media (max-width: 1120px) {
+    .ip-shell { grid-template-columns: 1fr; }
+    .ip-sidebar { display: none; }
+    .ip-grid-2,
+    .ip-grid-3,
+    .ip-kpis { grid-template-columns: 1fr; }
+    .ip-main { padding: 18px; }
+    .ip-header { padding: 20px; }
+  }
+</style>
+
+<div class="ip-shell">
+  <aside class="ip-sidebar">
+    <div class="ip-brand">{{PROTOTYPE_NAME}}</div>
+    <div class="ip-sidebar-meta">{{PROTOTYPE_META}}</div>
+    <nav class="ip-nav">
+      {{NAV_ITEMS}}
+    </nav>
+  </aside>
+
+  <main class="ip-main">
+    <header class="ip-header">
+      <div>
+        <h1>{{PAGE_TITLE}}</h1>
+        <p class="ip-subtitle">{{PAGE_SUBTITLE}}</p>
+      </div>
+      <div class="ip-actions">
+        {{HEADER_ACTIONS}}
+      </div>
+    </header>
+
+    <section class="ip-content">
+      {{PAGE_CONTENT}}
+    </section>
+  </main>
+</div>
+
+{{LAYER}}

@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interactive Prototype Demo · Backend Ops</title>
+    <style>
+      :root {
+        --ip-bg: #f3f5f8;
+        --ip-panel: #ffffff;
+        --ip-panel-soft: #f7f8fb;
+        --ip-border: #d8deea;
+        --ip-border-strong: #bfc9da;
+        --ip-text: #18202c;
+        --ip-text-soft: #5d6b82;
+        --ip-primary: #2457f5;
+        --ip-primary-soft: #e8eeff;
+        --ip-success: #1e9d67;
+        --ip-warning: #db8b17;
+        --ip-danger: #d14343;
+        --ip-shadow: 0 20px 48px rgba(19, 33, 68, 0.08);
+        --ip-radius: 20px;
+        --ip-radius-sm: 12px;
+        --ip-sidebar-width: 248px;
+        color-scheme: light;
+        font-family: "Segoe UI", "PingFang SC", "Helvetica Neue", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #eef2f8 0%, #f7f9fc 100%);
+        color: var(--ip-text);
+      }
+
+      .ip-shell { min-height: 100vh; display: grid; grid-template-columns: var(--ip-sidebar-width) minmax(0, 1fr); }
+      .ip-sidebar {
+        padding: 28px 20px;
+        background: #111827;
+        color: rgba(255, 255, 255, 0.92);
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .ip-brand { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+      .ip-sidebar-meta { font-size: 13px; color: rgba(255, 255, 255, 0.58); line-height: 1.6; }
+      .ip-nav { display: grid; gap: 8px; }
+      .ip-nav-item {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        padding: 12px 14px;
+        border-radius: 14px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background 160ms ease, transform 160ms ease;
+      }
+      .ip-nav-item.is-active,
+      .ip-nav-item:hover { background: rgba(255, 255, 255, 0.1); transform: translateX(2px); }
+      .ip-main { min-width: 0; padding: 28px; display: grid; gap: 20px; }
+      .ip-header {
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(216, 222, 234, 0.7);
+        border-radius: var(--ip-radius);
+        box-shadow: var(--ip-shadow);
+        padding: 22px 24px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .ip-header h1, .ip-section-title { margin: 0; font-size: 26px; line-height: 1.15; letter-spacing: -0.03em; }
+      .ip-subtitle, .ip-note { margin: 8px 0 0; color: var(--ip-text-soft); font-size: 14px; line-height: 1.6; }
+      .ip-actions, .ip-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+      .ip-content, .ip-grid-2, .ip-grid-3, .ip-kpis { min-width: 0; display: grid; gap: 16px; }
+      .ip-kpis, .ip-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .ip-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ip-card, .ip-kpi {
+        min-width: 0;
+        background: var(--ip-panel);
+        border: 1px solid rgba(216, 222, 234, 0.9);
+        border-radius: var(--ip-radius);
+        box-shadow: var(--ip-shadow);
+        padding: 20px;
+      }
+      .ip-kpi-label { color: var(--ip-text-soft); font-size: 13px; }
+      .ip-kpi-value { margin-top: 10px; font-size: 34px; font-weight: 700; letter-spacing: -0.04em; }
+      .ip-kpi-trend { margin-top: 10px; font-size: 13px; color: var(--ip-success); }
+      .ip-section-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+      .ip-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+      .ip-chip, .ip-input, .ip-field {
+        min-height: 42px;
+        padding: 0 14px;
+        border-radius: 12px;
+        border: 1px solid var(--ip-border);
+        background: var(--ip-panel-soft);
+        color: var(--ip-text);
+        font-size: 14px;
+      }
+      .ip-field { padding: 12px 14px; display: grid; gap: 8px; }
+      .ip-field-label {
+        font-size: 12px;
+        color: var(--ip-text-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .ip-btn {
+        min-height: 42px;
+        padding: 0 16px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+      }
+      .ip-btn:hover { transform: translateY(-1px); }
+      .ip-btn-primary { background: var(--ip-primary); color: #fff; box-shadow: 0 12px 24px rgba(36, 87, 245, 0.2); }
+      .ip-btn-secondary { background: var(--ip-panel-soft); border-color: var(--ip-border); color: var(--ip-text); }
+      .ip-table { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; font-size: 14px; }
+      .ip-table-wrap {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border: 1px solid #e8edf5;
+        border-radius: 18px;
+        scrollbar-gutter: stable;
+        -webkit-overflow-scrolling: touch;
+      }
+      .ip-table th, .ip-table td {
+        text-align: left;
+        padding: 14px 12px;
+        border-bottom: 1px solid #e8edf5;
+        vertical-align: top;
+        white-space: nowrap;
+      }
+      .ip-table th {
+        font-size: 12px;
+        color: var(--ip-text-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .ip-table tbody tr:hover { background: #f8faff; }
+      .ip-tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 0 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--ip-primary-soft);
+        color: var(--ip-primary);
+      }
+      .ip-tag-success { background: #e8f7ef; color: var(--ip-success); }
+      .ip-tag-warning { background: #fff2df; color: var(--ip-warning); }
+      .ip-tag-danger { background: #ffe7e7; color: var(--ip-danger); }
+      .ip-tabs {
+        padding: 6px;
+        background: var(--ip-panel-soft);
+        border-radius: 14px;
+        width: fit-content;
+      }
+      .ip-tab {
+        border: 0;
+        background: transparent;
+        color: var(--ip-text-soft);
+        min-height: 38px;
+        padding: 0 16px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .ip-tab.is-active { background: #fff; color: var(--ip-text); box-shadow: 0 8px 18px rgba(19, 33, 68, 0.08); }
+      .ip-layer {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 16, 28, 0.36);
+        display: flex;
+        justify-content: flex-end;
+        padding: 24px;
+        z-index: 50;
+      }
+      .ip-drawer, .ip-modal {
+        background: #fff;
+        border-radius: 24px;
+        box-shadow: 0 28px 70px rgba(12, 19, 34, 0.2);
+      }
+      .ip-drawer { width: min(480px, 100%); height: 100%; padding: 24px; overflow: auto; }
+      .ip-modal { width: min(560px, calc(100vw - 48px)); margin: auto; padding: 24px; }
+      .ip-toast-stack {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        display: grid;
+        gap: 10px;
+        z-index: 80;
+      }
+      .ip-toast {
+        padding: 12px 16px;
+        border-radius: 14px;
+        background: rgba(17, 24, 39, 0.92);
+        color: #fff;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+      }
+      .is-hidden { display: none !important; }
+      @media (max-width: 1120px) {
+        .ip-shell { grid-template-columns: 1fr; }
+        .ip-sidebar { display: none; }
+        .ip-kpis, .ip-grid-2, .ip-grid-3 { grid-template-columns: 1fr; }
+        .ip-main { padding: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      assumptions:
+      - 这是一个后台模式 demo，展示订单运营台的首页、列表、详情抽屉和指派弹窗。
+      - 目标是证明 backend scaffold 已经能承载高信息密度原型，而不是展示完整业务逻辑。
+    -->
+    <div class="ip-shell">
+      <aside class="ip-sidebar">
+        <div class="ip-brand">Modo+ 运营台</div>
+        <div class="ip-sidebar-meta">Backend mode demo with lightweight scaffold.</div>
+        <nav class="ip-nav">
+          <button class="ip-nav-item is-active">订单总览</button>
+          <button class="ip-nav-item">售后审核</button>
+          <button class="ip-nav-item">供应商协同</button>
+          <button class="ip-nav-item">财务复核</button>
+        </nav>
+      </aside>
+
+      <main class="ip-main">
+        <header class="ip-header">
+          <div>
+            <h1>订单运营总览</h1>
+            <p class="ip-subtitle">聚焦待分单、风险订单和超时节点，支持侧边抽屉与模态操作。</p>
+          </div>
+          <div class="ip-actions">
+            <button class="ip-btn ip-btn-secondary" data-toast="已刷新风险视图">刷新</button>
+            <button class="ip-btn ip-btn-primary" data-open="assign-panel" data-testid="open-assign">批量指派</button>
+          </div>
+        </header>
+
+        <section class="ip-kpis">
+          <article class="ip-kpi">
+            <div class="ip-kpi-label">待分单订单</div>
+            <div class="ip-kpi-value">126</div>
+            <div class="ip-kpi-trend">较昨日下降 12%</div>
+          </article>
+          <article class="ip-kpi">
+            <div class="ip-kpi-label">超时风险</div>
+            <div class="ip-kpi-value">18</div>
+            <div class="ip-kpi-trend" style="color: var(--ip-warning);">需 2 小时内处理</div>
+          </article>
+          <article class="ip-kpi">
+            <div class="ip-kpi-label">异常退款</div>
+            <div class="ip-kpi-value">7</div>
+            <div class="ip-kpi-trend" style="color: var(--ip-danger);">2 笔待财务复核</div>
+          </article>
+        </section>
+
+        <section class="ip-card">
+          <div class="ip-section-head">
+            <div>
+              <h2 class="ip-section-title">订单大厅</h2>
+              <p class="ip-note">用同一页表达筛选、列表、详情打开和批量指派。</p>
+            </div>
+            <div class="ip-tabs">
+              <button class="ip-tab is-active" data-tab-group="orders" data-tab-target="pending" data-testid="tab-pending">待处理</button>
+              <button class="ip-tab" data-tab-group="orders" data-tab-target="risk">风险</button>
+              <button class="ip-tab" data-tab-group="orders" data-tab-target="refund">退款</button>
+            </div>
+          </div>
+
+          <div class="ip-filters">
+            <div class="ip-chip">站点：Modo CN</div>
+            <div class="ip-chip">类型：实物订单</div>
+            <div class="ip-chip">SLA：4 小时内</div>
+            <button class="ip-btn ip-btn-secondary">重置筛选</button>
+          </div>
+
+          <div data-tab-panel-group="orders" data-tab-panel="pending">
+            <div class="ip-table-wrap">
+              <table class="ip-table">
+                <thead>
+                  <tr>
+                    <th>订单号</th>
+                    <th>用户</th>
+                    <th>当前状态</th>
+                    <th>风险信号</th>
+                    <th>负责人</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>#MO-10428</td>
+                    <td>陈晓敏<br /><span class="ip-note">上海 / 老客复购</span></td>
+                    <td><span class="ip-tag ip-tag-warning">待分单</span></td>
+                    <td>支付成功后 18 分钟未出库</td>
+                    <td>未指派</td>
+                    <td>
+                      <button class="ip-btn ip-btn-secondary" data-open="detail-panel" data-testid="open-detail">查看详情</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>#MO-10419</td>
+                    <td>赵以宁<br /><span class="ip-note">杭州 / VIP 客户</span></td>
+                    <td><span class="ip-tag ip-tag-danger">高风险</span></td>
+                    <td>地址异常 + 退款重复提交</td>
+                    <td>风控一组</td>
+                    <td>
+                      <button class="ip-btn ip-btn-secondary" data-open="detail-panel">查看详情</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="is-hidden" data-tab-panel-group="orders" data-tab-panel="risk">
+            <div class="ip-card" style="padding: 18px; background: var(--ip-panel-soft);">
+              <strong>风险池视图</strong>
+              <p class="ip-note">这里可以放更聚焦的风控规则、时间线和人工复核建议。</p>
+            </div>
+          </div>
+
+          <div class="is-hidden" data-tab-panel-group="orders" data-tab-panel="refund">
+            <div class="ip-card" style="padding: 18px; background: var(--ip-panel-soft);">
+              <strong>退款视图</strong>
+              <p class="ip-note">这里可以放退款原因分布、异常退款列表和财务同步状态。</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="ip-layer is-hidden" id="detail-panel">
+      <aside class="ip-drawer">
+        <div class="ip-section-head">
+          <div>
+            <h2 class="ip-section-title">订单详情 · #MO-10428</h2>
+            <p class="ip-note">在后台模式里直接用抽屉承载详情与审核动作。</p>
+          </div>
+          <button class="ip-btn ip-btn-secondary" data-close="detail-panel">关闭</button>
+        </div>
+
+        <div class="ip-grid-2">
+          <div class="ip-field">
+            <div class="ip-field-label">用户画像</div>
+            <div>高频复购 / 社区团购渠道 / 近 30 天下单 6 次</div>
+          </div>
+          <div class="ip-field">
+            <div class="ip-field-label">履约节点</div>
+            <div>支付成功 10:18 -> 仓配待确认 -> 预计 10:45 出库</div>
+          </div>
+        </div>
+
+        <section class="ip-card" style="margin-top: 16px;">
+          <div class="ip-section-head">
+            <div>
+              <h2 class="ip-section-title" style="font-size: 20px;">审核动作</h2>
+              <p class="ip-note">详情抽屉里直接做快速决策。</p>
+            </div>
+          </div>
+          <div class="ip-actions">
+            <button class="ip-btn ip-btn-primary" data-toast="已升级到风控一组" data-testid="escalate-order">升级风控</button>
+            <button class="ip-btn ip-btn-secondary" data-open="assign-panel">重新指派</button>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <div class="ip-layer is-hidden" id="assign-panel" style="justify-content: center;">
+      <div class="ip-modal">
+        <div class="ip-section-head">
+          <div>
+            <h2 class="ip-section-title">批量指派</h2>
+            <p class="ip-note">示例模态：选择处理小组并提交。</p>
+          </div>
+          <button class="ip-btn ip-btn-secondary" data-close="assign-panel">取消</button>
+        </div>
+
+        <div class="ip-grid-2">
+          <div class="ip-field">
+            <div class="ip-field-label">处理小组</div>
+            <div>风控一组</div>
+          </div>
+          <div class="ip-field">
+            <div class="ip-field-label">SLA 优先级</div>
+            <div>2 小时内响应</div>
+          </div>
+        </div>
+
+        <div class="ip-actions" style="margin-top: 18px; justify-content: flex-end;">
+          <button class="ip-btn ip-btn-secondary" data-close="assign-panel">返回</button>
+          <button class="ip-btn ip-btn-primary" data-toast="已指派 12 笔订单到风控一组" data-testid="confirm-assign">确认指派</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        function ensureToastStack() {
+          let stack = document.querySelector(".ip-toast-stack");
+          if (!stack) {
+            stack = document.createElement("div");
+            stack.className = "ip-toast-stack";
+            document.body.appendChild(stack);
+          }
+          return stack;
+        }
+
+        function showToast(message) {
+          const stack = ensureToastStack();
+          const toast = document.createElement("div");
+          toast.className = "ip-toast";
+          toast.textContent = message;
+          stack.appendChild(toast);
+          window.setTimeout(() => toast.remove(), 2200);
+        }
+
+        function toggleLayer(targetId, hidden) {
+          if (!targetId) return;
+          const layer = document.getElementById(targetId);
+          if (!layer) return;
+          layer.classList.toggle("is-hidden", hidden);
+        }
+
+        function setActiveTab(groupName, tabTarget) {
+          document.querySelectorAll(`[data-tab-group="${groupName}"]`).forEach((button) => {
+            button.classList.toggle("is-active", button.getAttribute("data-tab-target") === tabTarget);
+          });
+
+          document.querySelectorAll(`[data-tab-panel-group="${groupName}"]`).forEach((panel) => {
+            panel.classList.toggle("is-hidden", panel.getAttribute("data-tab-panel") !== tabTarget);
+          });
+        }
+
+        document.addEventListener("click", (event) => {
+          const navTarget = event.target.closest("[data-nav]");
+          if (navTarget) {
+            event.preventDefault();
+            const target = navTarget.getAttribute("data-nav");
+            if (target) window.location.href = target;
+            return;
+          }
+
+          const openTarget = event.target.closest("[data-open]");
+          if (openTarget) {
+            event.preventDefault();
+            toggleLayer(openTarget.getAttribute("data-open"), false);
+            return;
+          }
+
+          const closeTarget = event.target.closest("[data-close]");
+          if (closeTarget) {
+            event.preventDefault();
+            toggleLayer(closeTarget.getAttribute("data-close"), true);
+            return;
+          }
+
+          const toastTarget = event.target.closest("[data-toast]");
+          if (toastTarget) {
+            event.preventDefault();
+            showToast(toastTarget.getAttribute("data-toast") || "操作成功");
+            return;
+          }
+
+          const tabTarget = event.target.closest("[data-tab-group][data-tab-target]");
+          if (tabTarget) {
+            event.preventDefault();
+            setActiveTab(tabTarget.getAttribute("data-tab-group"), tabTarget.getAttribute("data-tab-target"));
+            return;
+          }
+
+          const layerTarget = event.target.closest(".ip-layer");
+          if (layerTarget && event.target === layerTarget) {
+            layerTarget.classList.add("is-hidden");
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key !== "Escape") return;
+          document.querySelectorAll(".ip-layer").forEach((layer) => {
+            layer.classList.add("is-hidden");
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>

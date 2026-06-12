@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Prototype Demo · Web Dashboard</title>
+  <link rel="icon" href="data:," />
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #dfdfdb; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    button { font: inherit; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const browserWindowStyles = {
+      window: {
+        display: 'inline-block',
+        background: '#fff',
+        borderRadius: 10,
+        overflow: 'hidden',
+        boxShadow: '0 30px 80px rgba(0,0,0,0.25), 0 0 0 0.5px rgba(0,0,0,0.15)',
+      },
+      chrome: {
+        background: '#dee1e6',
+        paddingTop: 10,
+        paddingLeft: 10,
+        paddingRight: 10,
+      },
+      tabRow: {
+        display: 'flex',
+        alignItems: 'flex-end',
+        gap: 6,
+      },
+      tab: {
+        background: '#fff',
+        padding: '8px 30px 8px 14px',
+        borderTopLeftRadius: 10,
+        borderTopRightRadius: 10,
+        fontSize: 12,
+        color: '#222',
+        maxWidth: 220,
+      },
+      navBar: {
+        background: '#fff',
+        padding: '8px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        borderBottom: '1px solid #e5e7eb',
+      },
+      urlBar: {
+        flex: 1,
+        background: '#f1f3f4',
+        borderRadius: 999,
+        padding: '7px 14px',
+        fontSize: 13,
+        color: '#333',
+      },
+      content: {
+        position: 'relative',
+        overflow: 'auto',
+        background: '#f3f1ec',
+      },
+    };
+
+    function BrowserWindow({ title = 'Workspace', url = 'https://prototype.local', width = 1240, height = 820, children }) {
+      return (
+        <div style={browserWindowStyles.window}>
+          <div style={browserWindowStyles.chrome}>
+            <div style={browserWindowStyles.tabRow}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingBottom: 10, marginRight: 8 }}>
+                <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#ff5f57' }} />
+                <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#febc2e' }} />
+                <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#28c840' }} />
+              </div>
+              <div style={browserWindowStyles.tab}>{title}</div>
+            </div>
+          </div>
+          <div style={browserWindowStyles.navBar}>
+            <div style={browserWindowStyles.urlBar}>🔒 {url}</div>
+          </div>
+          <div style={{ ...browserWindowStyles.content, width, height }}>{children}</div>
+        </div>
+      );
+    }
+
+    const webDemoStyles = {
+      shell: {
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        padding: 36,
+        background: 'linear-gradient(180deg, #edece6 0%, #d9d7d1 100%)',
+      },
+      app: {
+        display: 'grid',
+        gridTemplateColumns: '260px 1fr 320px',
+        minHeight: '100%',
+      },
+      sidebar: {
+        background: '#1e1d1a',
+        color: '#f5f1e8',
+        padding: 22,
+        display: 'grid',
+        gridTemplateRows: 'auto auto 1fr auto',
+        gap: 18,
+      },
+      navButton: active => ({
+        border: 0,
+        borderRadius: 16,
+        background: active ? '#f5f1e8' : 'transparent',
+        color: active ? '#1e1d1a' : '#d2ccc0',
+        textAlign: 'left',
+        padding: '14px 16px',
+        cursor: 'pointer',
+        minHeight: 48,
+        fontWeight: 600,
+      }),
+      main: {
+        padding: 24,
+        display: 'grid',
+        gridTemplateRows: 'auto auto 1fr',
+        gap: 18,
+      },
+      pageTitle: { margin: 0, fontSize: 30, color: '#181612' },
+      heroCard: {
+        borderRadius: 28,
+        padding: 24,
+        background: '#173f48',
+        color: '#fff',
+      },
+      cardGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: 16,
+      },
+      card: {
+        borderRadius: 22,
+        padding: 20,
+        background: 'rgba(255,255,255,0.72)',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
+      },
+      rightPanel: {
+        padding: 24,
+        borderLeft: '1px solid rgba(0,0,0,0.08)',
+        background: 'rgba(255,255,255,0.65)',
+      },
+      primaryButton: {
+        border: 0,
+        borderRadius: 16,
+        background: '#1b614d',
+        color: '#fff',
+        minHeight: 48,
+        padding: '0 16px',
+        cursor: 'pointer',
+        fontWeight: 700,
+      },
+      secondaryButton: {
+        border: '1px solid rgba(0,0,0,0.12)',
+        borderRadius: 16,
+        background: '#fff',
+        color: '#151310',
+        minHeight: 48,
+        padding: '0 16px',
+        cursor: 'pointer',
+        fontWeight: 600,
+      },
+    };
+
+    function DetailPanel({ open, onClose, selected }) {
+      if (!open) {
+        return (
+          <div style={webDemoStyles.rightPanel}>
+            <div style={{ color: '#7d776d', marginBottom: 10, textTransform: 'uppercase', fontSize: 12, letterSpacing: '0.1em' }}>Inspector</div>
+            <h3 style={{ marginTop: 0 }}>选择一个客户</h3>
+            <p style={{ lineHeight: 1.6, color: '#5f594f' }}>右侧面板用来模拟 CRM 里的详情抽屉与编辑流程。</p>
+          </div>
+        );
+      }
+
+      return (
+        <div style={webDemoStyles.rightPanel}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <strong>{selected.name}</strong>
+            <button data-testid="close-panel" style={{ ...webDemoStyles.secondaryButton, minHeight: 40 }} onClick={onClose}>关闭</button>
+          </div>
+          <div style={{ ...webDemoStyles.card, marginBottom: 16 }}>
+            <div style={{ color: '#7d776d', fontSize: 13 }}>当前阶段</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{selected.stage}</div>
+          </div>
+          <div style={{ ...webDemoStyles.card, display: 'grid', gap: 10, marginBottom: 16 }}>
+            <div>负责人：{selected.owner}</div>
+            <div>下一动作：安排需求澄清会</div>
+            <div>风险：采购窗口只剩 5 天</div>
+          </div>
+          <button data-testid="save-account" style={webDemoStyles.primaryButton} onClick={onClose}>保存并关闭</button>
+        </div>
+      );
+    }
+
+    function App() {
+      const accounts = [
+        { id: 1, name: 'Northwind AI', stage: 'Proposal', owner: 'Evelyn' },
+        { id: 2, name: 'Cedar Health', stage: 'Pilot', owner: 'Marcus' },
+        { id: 3, name: 'Nova Retail', stage: 'Negotiation', owner: 'Ava' },
+      ];
+      const [section, setSection] = React.useState('pipeline');
+      const [selected, setSelected] = React.useState(accounts[0]);
+      const [panelOpen, setPanelOpen] = React.useState(false);
+
+      return (
+        <div style={webDemoStyles.shell}>
+          <BrowserWindow title="CRM Prototype" url="https://prototype.local/crm">
+            <div style={webDemoStyles.app}>
+              <div style={webDemoStyles.sidebar}>
+                <div>
+                  <div style={{ color: '#8c8477', textTransform: 'uppercase', letterSpacing: '0.12em', fontSize: 12 }}>Interactive Prototype</div>
+                  <div style={{ marginTop: 8, fontSize: 26, fontWeight: 700 }}>Sales OS</div>
+                </div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <button style={webDemoStyles.navButton(section === 'pipeline')} onClick={() => setSection('pipeline')}>Pipeline</button>
+                  <button data-testid="nav-accounts" style={webDemoStyles.navButton(section === 'accounts')} onClick={() => setSection('accounts')}>Accounts</button>
+                  <button style={webDemoStyles.navButton(section === 'activity')} onClick={() => setSection('activity')}>Activity</button>
+                </div>
+                <div />
+                <div style={{ color: '#9c958a', fontSize: 14 }}>Prototype-only flow demo</div>
+              </div>
+
+              <div style={webDemoStyles.main}>
+                <div>
+                  <div style={{ color: '#7d776d', textTransform: 'uppercase', fontSize: 12, letterSpacing: '0.12em' }}>Section</div>
+                  <h1 style={webDemoStyles.pageTitle}>{section === 'pipeline' ? 'Pipeline health at a glance' : section === 'accounts' ? 'Key accounts that need action' : 'Recent activity overview'}</h1>
+                </div>
+
+                <div style={webDemoStyles.heroCard}>
+                  <div style={{ opacity: 0.7, marginBottom: 10 }}>本周提示</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>有 3 个账户即将进入成交窗口。</div>
+                  <div style={{ opacity: 0.84 }}>系统建议优先处理存在明确下一步动作但无人认领的账户。</div>
+                </div>
+
+                <div style={webDemoStyles.cardGrid}>
+                  {accounts.map(account => (
+                    <button
+                      key={account.id}
+                      data-testid={`account-${account.id}`}
+                      onClick={() => { setSelected(account); setPanelOpen(true); }}
+                      style={{ ...webDemoStyles.card, border: 0, textAlign: 'left', cursor: 'pointer' }}
+                    >
+                      <div style={{ color: '#7d776d', fontSize: 13 }}>{account.stage}</div>
+                      <div style={{ fontWeight: 700, fontSize: 22, margin: '8px 0 6px' }}>{account.name}</div>
+                      <div style={{ color: '#5f594f' }}>Owner · {account.owner}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <DetailPanel open={panelOpen} selected={selected} onClose={() => setPanelOpen(false)} />
+            </div>
+          </BrowserWindow>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

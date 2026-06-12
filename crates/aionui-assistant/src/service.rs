@@ -336,6 +336,19 @@ impl AssistantService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<(), AssistantError> {
+        let removed = self.repo.delete(id).await?;
+        if removed {
+            // Drop the override row (best-effort).
+            if let Err(e) = self.override_repo.delete(id).await {
+                warn!("failed to remove override for deleted assistant '{id}': {e}");
+            }
+
+            // Best-effort filesystem cleanup.
+            self.cleanup_user_assets(id);
+
+            return Ok(());
+        }
+
         match self.classify_source(id).await {
             AssistantSource::Builtin => {
                 return Err(AssistantError::Forbidden("Cannot delete built-in assistant".into()));
@@ -348,20 +361,7 @@ impl AssistantService {
             AssistantSource::User => {}
         }
 
-        let removed = self.repo.delete(id).await?;
-        if !removed {
-            return Err(AssistantError::NotFound(format!("assistant '{id}' not found")));
-        }
-
-        // Drop the override row (best-effort).
-        if let Err(e) = self.override_repo.delete(id).await {
-            warn!("failed to remove override for deleted assistant '{id}': {e}");
-        }
-
-        // Best-effort filesystem cleanup.
-        self.cleanup_user_assets(id);
-
-        Ok(())
+        Err(AssistantError::NotFound(format!("assistant '{id}' not found")))
     }
 
     pub async fn set_state(
@@ -789,6 +789,7 @@ fn assistant_error_to_extension_error(error: AssistantError) -> ExtensionError {
 /// [`AssistantService::resolve_default_agent_type`], which inspects the
 /// configured providers and returns a more specific default when possible.
 const DEFAULT_AGENT_TYPE: &str = "aionrs";
+const SYSTEM_AI_PM_ASSISTANT_ID: &str = "ai-product-manager";
 
 fn builtin_to_response(b: &BuiltinAssistant, ov: Option<&AssistantOverrideRow>) -> AssistantResponse {
     AssistantResponse {
@@ -800,7 +801,9 @@ fn builtin_to_response(b: &BuiltinAssistant, ov: Option<&AssistantOverrideRow>) 
         description_i18n: b.description_i18n.clone(),
         avatar: b.avatar.clone(),
         enabled: ov.map(|o| o.enabled).unwrap_or(true),
-        sort_order: ov.map(|o| o.sort_order).unwrap_or(0),
+        sort_order: ov
+            .map(|o| o.sort_order)
+            .unwrap_or_else(|| if b.id == SYSTEM_AI_PM_ASSISTANT_ID { -10_000 } else { 0 }),
         preset_agent_type: ov
             .and_then(|o| o.preset_agent_type.clone())
             .unwrap_or_else(|| b.preset_agent_type.clone()),
@@ -1049,8 +1052,8 @@ pub fn generate_user_id() -> String {
 mod tests {
     use super::*;
     use aionui_db::{
-        CreateProviderParams, SqliteAssistantOverrideRepository, SqliteAssistantRepository, SqliteProviderRepository,
-        init_database_memory,
+        CreateAssistantParams, CreateProviderParams, SqliteAssistantOverrideRepository, SqliteAssistantRepository,
+        SqliteProviderRepository, init_database_memory,
     };
     use aionui_extension::ExtensionStateStore;
     use aionui_realtime::BroadcastEventBus;
@@ -1220,6 +1223,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_places_system_ai_pm_before_recent_user_assistants() {
+        let fx = fixture_with_builtins(vec![mk_builtin("ai-product-manager", "AI Product Manager")]).await;
+        fx.service
+            .create(CreateAssistantRequest {
+                id: Some("u1".into()),
+                name: "Mine".into(),
+                ..req_default()
+            })
+            .await
+            .unwrap();
+        fx.service
+            .set_state(
+                "u1",
+                SetAssistantStateRequest {
+                    last_used_at: Some(999_999),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let list = fx.service.list().await.unwrap();
+        assert_eq!(list.first().map(|a| a.id.as_str()), Some("ai-product-manager"));
+        assert_eq!(list.first().map(|a| a.sort_order), Some(-10_000));
+    }
+
+    #[tokio::test]
     async fn create_rejects_empty_name() {
         let fx = fixture().await;
         let err = fx
@@ -1376,6 +1406,38 @@ mod tests {
         let fx = fixture_with_builtins(vec![mk_builtin("builtin-office", "Office")]).await;
         let err = fx.service.delete("builtin-office").await.unwrap_err();
         assert!(matches!(err, AssistantError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_builtin_id_removes_user_shadow_row_when_present() {
+        let fx = fixture_with_builtins(vec![mk_builtin("ai-product-manager", "AI Product Manager")]).await;
+        fx.service
+            .repo
+            .create(&CreateAssistantParams {
+                id: "ai-product-manager",
+                name: "AI 产品经理",
+                description: Some("PM Skills-native duplicate"),
+                avatar: None,
+                preset_agent_type: "aionrs",
+                enabled_skills: None,
+                custom_skill_names: None,
+                disabled_builtin_skills: None,
+                prompts: None,
+                models: None,
+                name_i18n: None,
+                description_i18n: None,
+                prompts_i18n: None,
+            })
+            .await
+            .unwrap();
+
+        fx.service.delete("ai-product-manager").await.unwrap();
+
+        assert!(fx.service.repo.get("ai-product-manager").await.unwrap().is_none());
+        let list = fx.service.list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "ai-product-manager");
+        assert_eq!(list[0].source, AssistantSource::Builtin);
     }
 
     #[tokio::test]
