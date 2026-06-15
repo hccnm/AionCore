@@ -130,6 +130,15 @@ pub trait IMockAgent: IAgentTask {
     async fn get_slash_commands(&self) -> Result<Vec<SlashCommandItem>, AgentError> {
         Ok(Vec::new())
     }
+    async fn acp_ext_request(
+        &self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, AgentError> {
+        Err(AgentError::bad_request(
+            "ACP extension requests are not supported for mock agents",
+        ))
+    }
     async fn handle_side_question(&self, _req: SideQuestionRequest) -> Result<SideQuestionResponse, AgentError> {
         Ok(SideQuestionResponse {
             status: "unsupported".into(),
@@ -407,6 +416,21 @@ impl AgentInstance {
             Self::Aionrs(m) => m.get_slash_commands().await,
             #[cfg(any(test, feature = "test-support"))]
             Self::Mock(m) => m.get_slash_commands().await,
+        }
+    }
+
+    pub async fn acp_ext_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AgentError> {
+        match self {
+            Self::Acp(m) => m.ext_request(method, params).await,
+            Self::Aionrs(_) => Err(AgentError::bad_request(
+                "ACP extension requests are not supported for this agent type",
+            )),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Mock(m) => m.acp_ext_request(method, params).await,
         }
     }
 

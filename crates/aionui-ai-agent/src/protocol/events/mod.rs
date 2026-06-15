@@ -13,14 +13,16 @@ pub use permission::{
 };
 pub use session_updates::{
     AgentStatusEventData, AvailableCommandsEventData, CronTriggerEventData, PlanEventData, SkillSuggestEventData,
-    ThinkingEventData,
+    ThinkingEventData, WorkflowPhaseData, WorkflowUpdateEventData,
 };
 pub use tool_call::{
     AcpToolCallContentItem, AcpToolCallEventData, AcpToolCallKind, AcpToolCallLocationItem,
     AcpToolCallSessionUpdateKind, AcpToolCallStatus, AcpToolCallTextBlock, AcpToolCallTextBlockType,
     AcpToolCallUpdateData, ToolCallEventData, ToolCallStatus, ToolGroupEntry,
 };
-pub(crate) use translate::{permission_request_to_event_data, session_notification_to_events};
+pub(crate) use translate::{
+    ext_notification_to_events, permission_request_to_event_data, session_notification_to_events,
+};
 
 /// Events emitted by an Agent during a message processing turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,7 @@ pub enum AgentStreamEvent {
     AcpPromptHookWarning(serde_json::Value),
     SlashCommandsUpdated(serde_json::Value),
     AvailableCommands(AvailableCommandsEventData),
+    WorkflowUpdate(WorkflowUpdateEventData),
     Finish(FinishEventData),
     Error(ErrorEventData),
     System(serde_json::Value),
@@ -107,11 +110,13 @@ pub struct FinishEventData {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::{
-        PermissionOption, PermissionOptionKind as SdkPermissionOptionKind, RequestPermissionRequest,
-        SessionNotification, SessionUpdate, ToolCall as SdkToolCall, ToolCallStatus as SdkToolCallStatus,
-        ToolCallUpdate as SdkToolCallUpdate, ToolCallUpdateFields, ToolKind as SdkToolKind,
+        ExtNotification, Meta, PermissionOption, PermissionOptionKind as SdkPermissionOptionKind,
+        RequestPermissionRequest, SessionNotification, SessionUpdate, ToolCall as SdkToolCall,
+        ToolCallStatus as SdkToolCallStatus, ToolCallUpdate as SdkToolCallUpdate, ToolCallUpdateFields,
+        ToolKind as SdkToolKind,
     };
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn text_event_roundtrip() {
@@ -231,6 +236,56 @@ mod tests {
     }
 
     #[test]
+    fn workflow_ext_notification_emits_workflow_update() {
+        let params = serde_json::value::to_raw_value(&json!({
+            "sessionId": "sess-1",
+            "sourceMessageSubtype": "task_progress",
+            "workflow": {
+                "workflowName": "execute-order-test-cases",
+                "taskId": "task-1",
+                "runId": "wf_123",
+                "status": "running",
+                "currentPhase": "执行测试",
+                "summary": "执行中",
+                "workflowAgents": [{
+                    "id": "agent-1",
+                    "label": "test:case[1.0.0].regionConfigManagement.json",
+                    "phase": "执行测试",
+                    "currentPhase": "执行测试",
+                    "currentAction": "运行测试用例",
+                    "rawSdkEvent": { "subtype": "task_progress" }
+                }]
+            },
+            "runs": []
+        }))
+        .unwrap()
+        .into();
+        let notification = ExtNotification::new("claude/workflowUpdate", params);
+
+        let events = ext_notification_to_events(&notification);
+
+        assert_eq!(events.len(), 1);
+        let json = serde_json::to_value(&events[0]).unwrap();
+        assert_eq!(json["type"], "workflow_update");
+        assert_eq!(json["data"]["session_id"], "sess-1");
+        assert_eq!(json["data"]["source_message_subtype"], "task_progress");
+        assert_eq!(json["data"]["workflow"]["workflowName"], "execute-order-test-cases");
+        assert_eq!(json["data"]["workflow"]["taskId"], "task-1");
+        assert_eq!(json["data"]["workflow"]["runId"], "wf_123");
+        assert_eq!(json["data"]["workflow"]["currentPhase"], "执行测试");
+        assert_eq!(json["data"]["workflow"]["summary"], "执行中");
+        assert_eq!(json["data"]["workflow"]["workflowAgents"][0]["phase"], "执行测试");
+        assert_eq!(
+            json["data"]["workflow"]["workflowAgents"][0]["currentPhase"],
+            "执行测试"
+        );
+        assert_eq!(
+            json["data"]["workflow"]["workflowAgents"][0]["rawSdkEvent"]["subtype"],
+            "task_progress"
+        );
+    }
+
+    #[test]
     fn error_event_roundtrip() {
         let event = AgentStreamEvent::Error(ErrorEventData::legacy("timeout", None));
         let json = serde_json::to_value(&event).unwrap();
@@ -326,6 +381,127 @@ mod tests {
         assert_eq!(json["data"]["update"]["status"], "completed");
         assert!(json["data"]["update"].get("title").is_none());
         assert!(json["data"]["update"].get("rawInput").is_none());
+    }
+
+    #[test]
+    fn workflow_meta_emits_workflow_update_with_phases_from_script_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("execute-order-test-cases.js");
+        fs::write(
+            &script_path,
+            r#"
+export const meta = {
+  name: 'execute-order-test-cases',
+  phases: [
+    { title: '环境准备', detail: '检查服务状态' },
+    { title: '执行测试', detail: '运行测试用例' },
+    { title: '生成报告', detail: '写入 test-histories' },
+  ],
+}
+"#,
+        )
+        .unwrap();
+
+        let mut claude = serde_json::Map::new();
+        claude.insert(
+            "workflow".into(),
+            json!({
+                "workflowName": "execute-order-test-cases",
+                "taskId": "task-1",
+                "runId": "wf_123",
+                "status": "running",
+                "scriptPath": script_path,
+            }),
+        );
+        let mut meta = Meta::new();
+        meta.insert("claudeCode".into(), serde_json::Value::Object(claude));
+
+        let notif = SessionNotification::new(
+            "sess-1",
+            SessionUpdate::ToolCallUpdate(
+                SdkToolCallUpdate::new(
+                    "tool-1",
+                    ToolCallUpdateFields::new().status(SdkToolCallStatus::Completed),
+                )
+                .meta(meta),
+            ),
+        );
+
+        let events = session_notification_to_events(&notif);
+        assert_eq!(events.len(), 2);
+        let json = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(json["type"], "workflow_update");
+        assert_eq!(json["data"]["session_id"], "sess-1");
+        assert_eq!(json["data"]["workflow"]["workflowName"], "execute-order-test-cases");
+        assert_eq!(json["data"]["workflow"]["phases"][0]["title"], "环境准备");
+        assert_eq!(json["data"]["workflow"]["phases"][1]["detail"], "运行测试用例");
+    }
+
+    #[test]
+    fn workflow_meta_enriches_phases_from_raw_input_script_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("execute-order-test-cases.js");
+        fs::write(
+            &script_path,
+            r#"
+export const meta = {
+  phases: [
+    { title: '环境准备', detail: '检查服务状态' },
+    { title: '执行测试', detail: '运行测试用例' },
+  ],
+}
+"#,
+        )
+        .unwrap();
+
+        let mut claude = serde_json::Map::new();
+        claude.insert(
+            "workflow".into(),
+            json!({
+                "workflowName": "execute-order-test-cases",
+                "status": "running",
+                "rawInput": { "scriptPath": script_path },
+            }),
+        );
+        let mut meta = Meta::new();
+        meta.insert("claudeCode".into(), serde_json::Value::Object(claude));
+
+        let notif = SessionNotification::new(
+            "sess-1",
+            SessionUpdate::ToolCallUpdate(SdkToolCallUpdate::new("tool-1", ToolCallUpdateFields::new()).meta(meta)),
+        );
+
+        let events = session_notification_to_events(&notif);
+        let json = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(json["data"]["workflow"]["phases"][0]["title"], "环境准备");
+        assert_eq!(json["data"]["workflow"]["phases"][1]["detail"], "运行测试用例");
+    }
+
+    #[test]
+    fn workflow_meta_enriches_phases_from_raw_input_inline_script() {
+        let mut claude = serde_json::Map::new();
+        claude.insert(
+            "workflow".into(),
+            json!({
+                "workflowName": "inline-workflow",
+                "status": "running",
+                "rawInput": {
+                    "script": "export const meta = { phases: [{ title: '探索', detail: '分析项目' }, { title: '生成', detail: '写测试' }] }"
+                },
+            }),
+        );
+        let mut meta = Meta::new();
+        meta.insert("claudeCode".into(), serde_json::Value::Object(claude));
+
+        let notif = SessionNotification::new(
+            "sess-1",
+            SessionUpdate::ToolCallUpdate(SdkToolCallUpdate::new("tool-1", ToolCallUpdateFields::new()).meta(meta)),
+        );
+
+        let events = session_notification_to_events(&notif);
+        let json = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(json["data"]["workflow"]["phases"][0]["title"], "探索");
+        assert_eq!(json["data"]["workflow"]["phases"][1]["detail"], "写测试");
     }
 
     #[test]

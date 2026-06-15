@@ -23,6 +23,8 @@ pub use types::{
 
 static INSTALL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 const MANAGED_ACP_SMOKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const LOCAL_SOURCE_ENV_PREFIX: &str = "AIONUI_MANAGED_ACP_SOURCE_";
+const LOCAL_TARBALL_ENV_PREFIX: &str = "AIONUI_MANAGED_ACP_TARBALL_";
 
 #[derive(Debug, Clone, Copy)]
 struct PlatformSpec {
@@ -40,6 +42,8 @@ struct DevPackageJson<'a> {
 #[derive(Debug, Deserialize)]
 struct InstalledPackageJson {
     name: String,
+    #[serde(default)]
+    version: Option<String>,
     #[serde(default)]
     bin: serde_json::Value,
     #[serde(default)]
@@ -60,6 +64,12 @@ struct LocalArtifactManifestWrite {
     path_entries: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LocalManagedAcpOverride {
+    SourceDir(PathBuf),
+    Tarball(PathBuf),
+}
+
 pub async fn ensure_managed_acp_tool(tool: ManagedAcpToolId) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
     ensure_managed_acp_tool_with_reporter(tool, None).await
 }
@@ -70,16 +80,27 @@ pub async fn ensure_managed_acp_tool_with_reporter(
 ) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
     let spec = platform_spec()?;
     let root = tool_root(tool, spec)?;
+    let local_override = local_managed_acp_override(tool);
 
-    if let Ok(installed) = validate_tool_root(tool, &root, reporter) {
+    if local_override.is_none()
+        && let Ok(installed) = validate_tool_root(tool, &root, reporter)
+    {
         return Ok(installed);
     }
 
     let lock = INSTALL_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
     let _guard = lock.lock().await;
 
-    if let Ok(installed) = validate_tool_root(tool, &root, reporter) {
+    if local_override.is_none()
+        && let Ok(installed) = validate_tool_root(tool, &root, reporter)
+    {
         return Ok(installed);
+    }
+
+    if let Some(local_override) = local_override {
+        return activate_local_override(tool, spec, &root, &local_override, reporter)
+            .await
+            .map_err(|error| report_failure(error, reporter));
     }
 
     if let Some(installed) =
@@ -103,17 +124,42 @@ pub async fn prepare_managed_acp_tool_to_root(
     root: &Path,
 ) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
     let spec = platform_spec()?;
+    let target_root = bundle_tool_root(root, tool, spec);
+
+    if let Some(local_override) = local_managed_acp_override(tool) {
+        return prepare_local_override_to_bundle_root(tool, spec, root, &target_root, &local_override).await;
+    }
+
     let node_runtime = ensure_node_runtime_with_reporter(None)
         .await
         .map_err(|error| ManagedAcpToolError::invalid(format!("prepare managed Node runtime: {error}")))?;
-    let target_root = bundle_tool_root(root, tool, spec);
-    let staging_root = bundle_prepare_staging_root(tool, spec, root);
+    prepare_package_spec_to_bundle_root(
+        tool,
+        spec,
+        &node_runtime,
+        root,
+        &target_root,
+        &format!("{}@{}", tool.package_name(), tool.version()),
+    )
+    .await
+}
+
+async fn prepare_package_spec_to_bundle_root(
+    tool: ManagedAcpToolId,
+    spec: PlatformSpec,
+    node_runtime: &crate::ResolvedNodeRuntime,
+    bundle_root: &Path,
+    target_root: &Path,
+    package_spec: &str,
+) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
+    let staging_root = bundle_prepare_staging_root(tool, spec, bundle_root);
     if staging_root.exists() {
         let _ = fs::remove_dir_all(&staging_root);
     }
     fs::create_dir_all(&staging_root).map_err(ManagedAcpToolError::io)?;
 
-    let result = prepare_local_tool_source_to_root(tool, spec, &node_runtime, &staging_root, &target_root).await;
+    let result =
+        prepare_local_tool_source_to_root(tool, spec, node_runtime, &staging_root, target_root, package_spec).await;
 
     if let Err(error) = fs::remove_dir_all(&staging_root)
         && error.kind() != std::io::ErrorKind::NotFound
@@ -128,6 +174,110 @@ pub async fn prepare_managed_acp_tool_to_root(
     }
 
     result
+}
+
+async fn prepare_local_override_to_bundle_root(
+    tool: ManagedAcpToolId,
+    spec: PlatformSpec,
+    bundle_root: &Path,
+    target_root: &Path,
+    local_override: &LocalManagedAcpOverride,
+) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
+    match local_override {
+        LocalManagedAcpOverride::SourceDir(source_root) if source_root.join("manifest.json").is_file() => {
+            managed_resources::materialize_directory(source_root, target_root).map_err(ManagedAcpToolError::io)?;
+            validate_tool_root(tool, target_root, None)
+        }
+        LocalManagedAcpOverride::SourceDir(source_root) => {
+            if !source_root.join("package.json").is_file() {
+                return Err(ManagedAcpToolError::invalid(format!(
+                    "local {} source missing package.json under {}",
+                    tool.display_name(),
+                    source_root.display()
+                )));
+            }
+            let node_runtime = ensure_node_runtime_with_reporter(None)
+                .await
+                .map_err(|error| ManagedAcpToolError::invalid(format!("prepare managed Node runtime: {error}")))?;
+            prepare_local_project_source_to_bundle_root(tool, spec, &node_runtime, source_root, target_root).await
+        }
+        LocalManagedAcpOverride::Tarball(tarball_path) => {
+            if !tarball_path.is_file() {
+                return Err(ManagedAcpToolError::invalid(format!(
+                    "local managed {} tarball missing: {}",
+                    tool.display_name(),
+                    tarball_path.display()
+                )));
+            }
+            let node_runtime = ensure_node_runtime_with_reporter(None)
+                .await
+                .map_err(|error| ManagedAcpToolError::invalid(format!("prepare managed Node runtime: {error}")))?;
+            prepare_package_spec_to_bundle_root(
+                tool,
+                spec,
+                &node_runtime,
+                bundle_root,
+                target_root,
+                &tarball_path.to_string_lossy(),
+            )
+            .await
+        }
+    }
+}
+
+async fn prepare_local_project_source_to_bundle_root(
+    tool: ManagedAcpToolId,
+    spec: PlatformSpec,
+    node_runtime: &crate::ResolvedNodeRuntime,
+    source_root: &Path,
+    target_root: &Path,
+) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
+    let source_package_json = read_installed_package_json(&source_root.join("package.json"))?;
+    if source_package_json.name != tool.package_name() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local {} source expected package {}, found {}",
+            tool.display_name(),
+            tool.package_name(),
+            source_package_json.name
+        )));
+    }
+    let source_entrypoint = source_root.join(resolve_package_bin_entry(
+        &source_package_json.name,
+        &source_package_json.bin,
+    )?);
+    if !source_entrypoint.is_file() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local {} entrypoint missing: {}",
+            tool.display_name(),
+            source_entrypoint.display()
+        )));
+    }
+    validate_platform_binary(tool, source_root, spec)?;
+    let source_smoke_target = resolve_package_smoke_target(source_root, &source_package_json)?;
+    validate_package_smoke_target(node_runtime, source_root, tool, &source_smoke_target).await?;
+
+    if target_root.exists() {
+        fs::remove_dir_all(target_root).map_err(ManagedAcpToolError::io)?;
+    }
+    fs::create_dir_all(target_root).map_err(ManagedAcpToolError::io)?;
+    copy_required_file(source_root, target_root, "package.json")?;
+    copy_optional_file(source_root, target_root, "package-lock.json")?;
+    copy_required_directory(source_root, target_root, "dist")?;
+    copy_required_directory(source_root, target_root, "node_modules")?;
+
+    let package_json = read_installed_package_json(&target_root.join("package.json"))?;
+    let manifest = build_project_root_artifact_manifest(&package_json)?;
+    fs::write(
+        target_root.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| ManagedAcpToolError::invalid(format!("serialize local ACP manifest: {error}")))?,
+    )
+    .map_err(ManagedAcpToolError::io)?;
+
+    validate_platform_binary(tool, target_root, spec)?;
+    let smoke_target = resolve_package_smoke_target(target_root, &package_json)?;
+    validate_package_smoke_target(node_runtime, target_root, tool, &smoke_target).await?;
+    validate_tool_root(tool, target_root, None)
 }
 
 fn report_failure(
@@ -471,9 +621,16 @@ async fn prepare_local_tool_source(
     staging_root: &Path,
     target_root: &Path,
 ) -> Result<(), ManagedAcpToolError> {
-    prepare_local_tool_source_to_root(tool, spec, node_runtime, staging_root, target_root)
-        .await
-        .map(|_| ())
+    prepare_local_tool_source_to_root(
+        tool,
+        spec,
+        node_runtime,
+        staging_root,
+        target_root,
+        &format!("{}@{}", tool.package_name(), tool.version()),
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn prepare_local_tool_source_to_root(
@@ -482,6 +639,7 @@ async fn prepare_local_tool_source_to_root(
     node_runtime: &crate::ResolvedNodeRuntime,
     staging_root: &Path,
     target_root: &Path,
+    package_spec: &str,
 ) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
     let project_dir = staging_root.join("project");
     let npm_cache_dir = staging_root.join("npm-cache");
@@ -505,7 +663,7 @@ async fn prepare_local_tool_source_to_root(
             spec.npm_os,
             "--cpu",
             spec.npm_cpu,
-            &format!("{}@{}", tool.package_name(), tool.version()),
+            package_spec,
         ],
         "generate managed ACP local lockfile",
     )
@@ -609,13 +767,7 @@ fn build_local_artifact_manifest(
 ) -> Result<LocalArtifactManifestWrite, ManagedAcpToolError> {
     let package_segments = package_path_segments(tool.package_name());
     let package_json_path = package_json_path(project_dir, tool.package_name());
-    let contents = fs::read_to_string(&package_json_path).map_err(ManagedAcpToolError::io)?;
-    let package_json: InstalledPackageJson = serde_json::from_str(&contents).map_err(|error| {
-        ManagedAcpToolError::invalid(format!(
-            "parse installed package manifest failed for {}: {error}",
-            package_json_path.display()
-        ))
-    })?;
+    let package_json = read_installed_package_json(&package_json_path)?;
     let entrypoint_rel = resolve_package_bin_entry(&package_json.name, &package_json.bin)?;
 
     let mut entrypoint = PathBuf::from("node_modules");
@@ -626,6 +778,16 @@ fn build_local_artifact_manifest(
 
     Ok(LocalArtifactManifestWrite {
         entrypoint: normalize_slashes(&entrypoint),
+        path_entries: vec!["node_modules/.bin".into()],
+    })
+}
+
+fn build_project_root_artifact_manifest(
+    package_json: &InstalledPackageJson,
+) -> Result<LocalArtifactManifestWrite, ManagedAcpToolError> {
+    let entrypoint = resolve_package_bin_entry(&package_json.name, &package_json.bin)?;
+    Ok(LocalArtifactManifestWrite {
+        entrypoint,
         path_entries: vec!["node_modules/.bin".into()],
     })
 }
@@ -641,6 +803,43 @@ fn validate_bridge_entrypoint(
             entrypoint.display()
         )));
     }
+    Ok(())
+}
+
+fn copy_required_file(source_root: &Path, target_root: &Path, file_name: &str) -> Result<(), ManagedAcpToolError> {
+    let source = source_root.join(file_name);
+    if !source.is_file() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local ACP source missing required file: {}",
+            source.display()
+        )));
+    }
+    fs::copy(&source, target_root.join(file_name)).map_err(ManagedAcpToolError::io)?;
+    Ok(())
+}
+
+fn copy_optional_file(source_root: &Path, target_root: &Path, file_name: &str) -> Result<(), ManagedAcpToolError> {
+    let source = source_root.join(file_name);
+    if source.is_file() {
+        fs::copy(&source, target_root.join(file_name)).map_err(ManagedAcpToolError::io)?;
+    }
+    Ok(())
+}
+
+fn copy_required_directory(
+    source_root: &Path,
+    target_root: &Path,
+    directory_name: &str,
+) -> Result<(), ManagedAcpToolError> {
+    let source = source_root.join(directory_name);
+    if !source.is_dir() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local ACP source missing required directory: {}",
+            source.display()
+        )));
+    }
+    managed_resources::materialize_directory(&source, &target_root.join(directory_name))
+        .map_err(ManagedAcpToolError::io)?;
     Ok(())
 }
 
@@ -706,56 +905,9 @@ async fn validate_package_smoke(
     tool: ManagedAcpToolId,
 ) -> Result<(), ManagedAcpToolError> {
     let package_json_path = package_json_path(project_dir, tool.package_name());
-    let contents = fs::read_to_string(&package_json_path).map_err(ManagedAcpToolError::io)?;
-    let package_json: InstalledPackageJson = serde_json::from_str(&contents).map_err(|error| {
-        ManagedAcpToolError::invalid(format!(
-            "parse installed package manifest failed for {}: {error}",
-            package_json_path.display()
-        ))
-    })?;
-    let smoke_target = resolve_package_smoke_target(project_dir, &package_json)?;
-    let mut builder = Builder::clean_cli(node_runtime.node_path.clone());
-    builder.current_dir(project_dir);
-    match &smoke_target {
-        PackageSmokeTarget::Import(path) => {
-            builder
-                .arg("--input-type=module")
-                .arg("-e")
-                .arg("import { pathToFileURL } from 'node:url'; await import(pathToFileURL(process.argv[1]).href);")
-                .arg(path);
-        }
-        PackageSmokeTarget::SyntaxCheck(path) => {
-            builder.arg("--check").arg(path);
-        }
-    }
-    let output = tokio::time::timeout(MANAGED_ACP_SMOKE_TIMEOUT, builder.output())
-        .await
-        .map_err(|_| {
-            ManagedAcpToolError::invalid(format!(
-                "smoke test for managed {} package timed out after {}s",
-                tool.display_name(),
-                MANAGED_ACP_SMOKE_TIMEOUT.as_secs()
-            ))
-        })?
-        .map_err(ManagedAcpToolError::io)?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let detail = if stderr.is_empty() {
-        stdout
-    } else if stdout.is_empty() {
-        stderr
-    } else {
-        format!("{stderr}; stdout: {stdout}")
-    };
-    Err(ManagedAcpToolError::invalid(format!(
-        "smoke test for managed {} package failed with exit code {:?}: {detail}",
-        tool.display_name(),
-        output.status.code()
-    )))
+    let package_json = read_installed_package_json(&package_json_path)?;
+    let smoke_target = resolve_package_smoke_target(&package_root(project_dir, &package_json.name), &package_json)?;
+    validate_package_smoke_target(node_runtime, project_dir, tool, &smoke_target).await
 }
 
 fn package_json_path(project_dir: &Path, package_name: &str) -> PathBuf {
@@ -806,19 +958,15 @@ fn resolve_package_bin_entry(package_name: &str, bin_field: &serde_json::Value) 
 }
 
 fn resolve_package_smoke_target(
-    project_dir: &Path,
+    package_root: &Path,
     package_json: &InstalledPackageJson,
 ) -> Result<PackageSmokeTarget, ManagedAcpToolError> {
     if let Some(entry) = resolve_package_import_entry(&package_json.exports, package_json.main.as_deref()) {
-        return Ok(PackageSmokeTarget::Import(
-            package_root(project_dir, &package_json.name).join(entry),
-        ));
+        return Ok(PackageSmokeTarget::Import(package_root.join(entry)));
     }
 
     let bin_entry = resolve_package_bin_entry(package_json.name.as_str(), &package_json.bin)?;
-    Ok(PackageSmokeTarget::SyntaxCheck(
-        package_root(project_dir, &package_json.name).join(bin_entry),
-    ))
+    Ok(PackageSmokeTarget::SyntaxCheck(package_root.join(bin_entry)))
 }
 
 fn resolve_package_import_entry(exports_field: &serde_json::Value, main_field: Option<&str>) -> Option<String> {
@@ -848,6 +996,243 @@ fn resolve_package_import_entry(exports_field: &serde_json::Value, main_field: O
 
 fn normalize_slashes(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn read_installed_package_json(package_json_path: &Path) -> Result<InstalledPackageJson, ManagedAcpToolError> {
+    let contents = fs::read_to_string(package_json_path).map_err(ManagedAcpToolError::io)?;
+    serde_json::from_str(&contents).map_err(|error| {
+        ManagedAcpToolError::invalid(format!(
+            "parse installed package manifest failed for {}: {error}",
+            package_json_path.display()
+        ))
+    })
+}
+
+fn local_managed_acp_override(tool: ManagedAcpToolId) -> Option<LocalManagedAcpOverride> {
+    if let Some(path) = configured_override_path(&local_source_env_key(tool)) {
+        return Some(LocalManagedAcpOverride::SourceDir(path));
+    }
+
+    configured_override_path(&local_tarball_env_key(tool)).map(LocalManagedAcpOverride::Tarball)
+}
+
+fn local_source_env_key(tool: ManagedAcpToolId) -> String {
+    format!("{LOCAL_SOURCE_ENV_PREFIX}{}", local_override_env_suffix(tool))
+}
+
+fn local_tarball_env_key(tool: ManagedAcpToolId) -> String {
+    format!("{LOCAL_TARBALL_ENV_PREFIX}{}", local_override_env_suffix(tool))
+}
+
+fn local_override_env_suffix(tool: ManagedAcpToolId) -> String {
+    tool.slug()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn configured_override_path(env_key: &str) -> Option<PathBuf> {
+    std::env::var_os(env_key)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+async fn activate_local_override(
+    tool: ManagedAcpToolId,
+    spec: PlatformSpec,
+    root: &Path,
+    local_override: &LocalManagedAcpOverride,
+    reporter: Option<&dyn ManagedAcpToolProgressReporter>,
+) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
+    match local_override {
+        LocalManagedAcpOverride::SourceDir(source_root) => {
+            emit_progress(
+                reporter,
+                ManagedAcpToolProgress::extracting(format!(
+                    "activating local {} source from {}",
+                    tool.display_name(),
+                    source_root.display()
+                )),
+            );
+
+            if source_root.join("manifest.json").is_file() {
+                return validate_tool_root(tool, source_root, reporter);
+            }
+
+            validate_local_project_source(tool, spec, source_root, reporter).await
+        }
+        LocalManagedAcpOverride::Tarball(tarball_path) => {
+            if !tarball_path.is_file() {
+                return Err(ManagedAcpToolError::invalid(format!(
+                    "local managed {} tarball missing: {}",
+                    tool.display_name(),
+                    tarball_path.display()
+                )));
+            }
+
+            if root.exists() {
+                fs::remove_dir_all(root).map_err(ManagedAcpToolError::io)?;
+            }
+
+            let node_runtime = ensure_node_runtime_with_reporter(None)
+                .await
+                .map_err(|error| ManagedAcpToolError::invalid(format!("prepare managed Node runtime: {error}")))?;
+            let staging_root = prepare_staging_root(tool, spec)?;
+            if staging_root.exists() {
+                let _ = fs::remove_dir_all(&staging_root);
+            }
+            fs::create_dir_all(&staging_root).map_err(ManagedAcpToolError::io)?;
+
+            let tarball_spec = tarball_path.to_string_lossy().into_owned();
+            let result =
+                prepare_local_tool_source_to_root(tool, spec, &node_runtime, &staging_root, root, &tarball_spec).await;
+
+            if let Err(error) = fs::remove_dir_all(&staging_root)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!(
+                    tool = tool.slug(),
+                    version = tool.version(),
+                    staging_root = %staging_root.display(),
+                    error = %error,
+                    "failed to clean up managed ACP local tarball staging directory"
+                );
+            }
+
+            result
+        }
+    }
+}
+
+async fn validate_local_project_source(
+    tool: ManagedAcpToolId,
+    spec: PlatformSpec,
+    source_root: &Path,
+    reporter: Option<&dyn ManagedAcpToolProgressReporter>,
+) -> Result<ResolvedManagedAcpTool, ManagedAcpToolError> {
+    emit_progress(
+        reporter,
+        ManagedAcpToolProgress::validating(format!(
+            "validating local {} source under {}",
+            tool.display_name(),
+            source_root.display()
+        )),
+    );
+
+    let package_json_path = source_root.join("package.json");
+    if !package_json_path.is_file() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local {} source missing package.json under {}",
+            tool.display_name(),
+            source_root.display()
+        )));
+    }
+
+    let package_json = read_installed_package_json(&package_json_path)?;
+    if package_json.name != tool.package_name() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local {} source expected package {}, found {}",
+            tool.display_name(),
+            tool.package_name(),
+            package_json.name
+        )));
+    }
+
+    let entrypoint_rel = resolve_package_bin_entry(&package_json.name, &package_json.bin)?;
+    let entrypoint = source_root.join(&entrypoint_rel);
+    if !entrypoint.is_file() {
+        return Err(ManagedAcpToolError::invalid(format!(
+            "local {} entrypoint missing: {}",
+            tool.display_name(),
+            entrypoint.display()
+        )));
+    }
+
+    validate_platform_binary(tool, source_root, spec)?;
+
+    let node_runtime = ensure_node_runtime_with_reporter(None)
+        .await
+        .map_err(|error| ManagedAcpToolError::invalid(format!("prepare managed Node runtime: {error}")))?;
+    let smoke_target = resolve_package_smoke_target(source_root, &package_json)?;
+    validate_package_smoke_target(&node_runtime, source_root, tool, &smoke_target).await?;
+
+    let env_path_entries = {
+        let candidate = source_root.join("node_modules").join(".bin");
+        if candidate.exists() {
+            vec![candidate]
+        } else {
+            Vec::new()
+        }
+    };
+
+    let resolved = ResolvedManagedAcpTool {
+        id: tool,
+        version: package_json.version.unwrap_or_else(|| tool.version().to_owned()),
+        root: source_root.to_path_buf(),
+        entrypoint,
+        env_path_entries,
+    };
+    emit_progress(
+        reporter,
+        ManagedAcpToolProgress::ready(format!("local {} source is ready", tool.display_name())),
+    );
+    Ok(resolved)
+}
+
+async fn validate_package_smoke_target(
+    node_runtime: &crate::ResolvedNodeRuntime,
+    current_dir: &Path,
+    tool: ManagedAcpToolId,
+    smoke_target: &PackageSmokeTarget,
+) -> Result<(), ManagedAcpToolError> {
+    let mut builder = Builder::clean_cli(node_runtime.node_path.clone());
+    builder.current_dir(current_dir);
+    match smoke_target {
+        PackageSmokeTarget::Import(path) => {
+            builder
+                .arg("--input-type=module")
+                .arg("-e")
+                .arg("import { pathToFileURL } from 'node:url'; await import(pathToFileURL(process.argv[1]).href);")
+                .arg(path);
+        }
+        PackageSmokeTarget::SyntaxCheck(path) => {
+            builder.arg("--check").arg(path);
+        }
+    }
+    let output = tokio::time::timeout(MANAGED_ACP_SMOKE_TIMEOUT, builder.output())
+        .await
+        .map_err(|_| {
+            ManagedAcpToolError::invalid(format!(
+                "smoke test for managed {} package timed out after {}s",
+                tool.display_name(),
+                MANAGED_ACP_SMOKE_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(ManagedAcpToolError::io)?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let detail = if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        stderr
+    } else {
+        format!("{stderr}; stdout: {stdout}")
+    };
+    Err(ManagedAcpToolError::invalid(format!(
+        "smoke test for managed {} package failed with exit code {:?}: {detail}",
+        tool.display_name(),
+        output.status.code()
+    )))
 }
 
 fn prepare_staging_root(tool: ManagedAcpToolId, spec: PlatformSpec) -> Result<PathBuf, ManagedAcpToolError> {
@@ -975,6 +1360,57 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fmt;
+
+    fn write_fake_ready_artifact(root: &Path) {
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules").join(".bin")).unwrap();
+        std::fs::write(root.join("dist").join("index.js"), "console.log('ready');\n").unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec_pretty(&json!({
+                "entrypoint": "dist/index.js",
+                "path_entries": ["node_modules/.bin"],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn write_fake_local_project_source(root: &Path, spec: PlatformSpec) {
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules").join(".bin")).unwrap();
+        std::fs::create_dir_all(
+            root.join("node_modules")
+                .join(format!("@anthropic-ai/claude-agent-sdk-{}", spec.manifest_key)),
+        )
+        .unwrap();
+        std::fs::write(root.join("dist").join("index.js"), "console.log('ready');\n").unwrap();
+        std::fs::write(root.join("dist").join("lib.js"), "export {};\n").unwrap();
+        std::fs::write(
+            root.join("node_modules")
+                .join(format!("@anthropic-ai/claude-agent-sdk-{}", spec.manifest_key))
+                .join("claude"),
+            "",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            serde_json::to_vec_pretty(&json!({
+                "name": "@agentclientprotocol/claude-agent-acp",
+                "version": "0.44.0",
+                "bin": {
+                    "claude-agent-acp": "dist/index.js"
+                },
+                "exports": {
+                    ".": {
+                        "import": "./dist/lib.js"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn managed_acp_tool_command_uses_node_runtime() {
@@ -1117,9 +1553,14 @@ mod tests {
     #[test]
     fn resolve_package_smoke_target_prefers_importable_entry_for_exported_package() {
         let tmp = tempfile::tempdir().unwrap();
-        let project_dir = tmp.path();
+        let project_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("@agentclientprotocol")
+            .join("claude-agent-acp");
         let package_json = InstalledPackageJson {
             name: "@agentclientprotocol/claude-agent-acp".into(),
+            version: None,
             bin: json!({
                 "claude-agent-acp": "dist/index.js",
             }),
@@ -1132,27 +1573,25 @@ mod tests {
             }),
         };
 
-        let target = resolve_package_smoke_target(project_dir, &package_json).expect("smoke target");
+        let target = resolve_package_smoke_target(&project_dir, &package_json).expect("smoke target");
 
         assert_eq!(
             target,
-            PackageSmokeTarget::Import(
-                project_dir
-                    .join("node_modules")
-                    .join("@agentclientprotocol")
-                    .join("claude-agent-acp")
-                    .join("dist")
-                    .join("lib.js")
-            )
+            PackageSmokeTarget::Import(project_dir.join("dist").join("lib.js"))
         );
     }
 
     #[test]
     fn resolve_package_smoke_target_falls_back_to_bin_check_for_cli_only_package() {
         let tmp = tempfile::tempdir().unwrap();
-        let project_dir = tmp.path();
+        let project_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("@zed-industries")
+            .join("codex-acp");
         let package_json = InstalledPackageJson {
             name: "@zed-industries/codex-acp".into(),
+            version: None,
             bin: json!({
                 "codex-acp": "bin/codex-acp.js",
             }),
@@ -1160,18 +1599,11 @@ mod tests {
             exports: serde_json::Value::Null,
         };
 
-        let target = resolve_package_smoke_target(project_dir, &package_json).expect("smoke target");
+        let target = resolve_package_smoke_target(&project_dir, &package_json).expect("smoke target");
 
         assert_eq!(
             target,
-            PackageSmokeTarget::SyntaxCheck(
-                project_dir
-                    .join("node_modules")
-                    .join("@zed-industries")
-                    .join("codex-acp")
-                    .join("bin")
-                    .join("codex-acp.js")
-            )
+            PackageSmokeTarget::SyntaxCheck(project_dir.join("bin").join("codex-acp.js"))
         );
     }
 
@@ -1184,11 +1616,201 @@ mod tests {
     }
 
     #[test]
+    fn local_override_env_keys_use_slug_suffix() {
+        assert_eq!(
+            local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp),
+            "AIONUI_MANAGED_ACP_SOURCE_CLAUDE_AGENT_ACP"
+        );
+        assert_eq!(
+            local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp),
+            "AIONUI_MANAGED_ACP_TARBALL_CLAUDE_AGENT_ACP"
+        );
+    }
+
+    #[test]
+    fn local_source_override_takes_precedence_over_tarball() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_dir = tmp.path().join("source");
+        let tarball = tmp.path().join("tool.tgz");
+        if !crate::test_support::run_in_env_child(
+            "acp_tool_runtime::tests::local_source_override_takes_precedence_over_tarball",
+            |command| {
+                command
+                    .env(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp), &source_dir)
+                    .env(local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp), &tarball);
+            },
+        ) {
+            return;
+        }
+
+        let source_dir = PathBuf::from(
+            std::env::var_os(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp)).expect("source override env"),
+        );
+        let override_source = local_managed_acp_override(ManagedAcpToolId::ClaudeAgentAcp);
+        assert_eq!(override_source, Some(LocalManagedAcpOverride::SourceDir(source_dir)));
+    }
+
+    #[test]
     fn doctor_snapshot_includes_builtin_acp_tools() {
         let rows = doctor_snapshot();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].tool, "codex-acp");
         assert_eq!(rows[1].tool, "claude-agent-acp");
+    }
+
+    #[tokio::test]
+    async fn local_source_override_activates_ready_artifact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("local-acp");
+        if !crate::test_support::run_in_env_child(
+            "acp_tool_runtime::tests::local_source_override_activates_ready_artifact",
+            |command| {
+                command
+                    .env(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp), &source_root)
+                    .env_remove(local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp));
+            },
+        ) {
+            return;
+        }
+
+        let source_root = PathBuf::from(
+            std::env::var_os(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp)).expect("source override env"),
+        );
+        crate::cache::init(tmp.path().join("data"));
+        write_fake_ready_artifact(&source_root);
+
+        let resolved = ensure_managed_acp_tool(ManagedAcpToolId::ClaudeAgentAcp)
+            .await
+            .expect("local source override should resolve");
+
+        assert_eq!(resolved.root, source_root);
+        assert_eq!(resolved.entrypoint, source_root.join("dist").join("index.js"));
+        assert_eq!(
+            resolved.env_path_entries,
+            vec![source_root.join("node_modules").join(".bin")]
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_bundle_uses_ready_local_source_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("local-acp");
+        if !crate::test_support::run_in_env_child(
+            "acp_tool_runtime::tests::prepare_bundle_uses_ready_local_source_override",
+            |command| {
+                command
+                    .env(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp), &source_root)
+                    .env_remove(local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp));
+            },
+        ) {
+            return;
+        }
+
+        let source_root = PathBuf::from(
+            std::env::var_os(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp)).expect("source override env"),
+        );
+        let bundle_root = tmp.path().join("bundle");
+        let spec = platform_spec().unwrap();
+        let expected_root = bundle_root
+            .join("acp")
+            .join("claude-agent-acp")
+            .join("0.39.0")
+            .join(spec.manifest_key);
+        write_fake_ready_artifact(&source_root);
+
+        let resolved = prepare_managed_acp_tool_to_root(ManagedAcpToolId::ClaudeAgentAcp, &bundle_root)
+            .await
+            .expect("ready local source override should be bundled");
+
+        assert_eq!(resolved.root, expected_root);
+        assert_eq!(resolved.entrypoint, expected_root.join("dist").join("index.js"));
+        assert!(expected_root.join("manifest.json").is_file());
+        assert!(expected_root.join("dist").join("index.js").is_file());
+    }
+
+    #[tokio::test]
+    async fn prepare_bundle_copies_local_project_source_runtime_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_root = tmp.path().join("local-acp");
+        if !crate::test_support::run_in_env_child(
+            "acp_tool_runtime::tests::prepare_bundle_copies_local_project_source_runtime_files",
+            |command| {
+                command
+                    .env(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp), &source_root)
+                    .env_remove(local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp));
+            },
+        ) {
+            return;
+        }
+
+        let source_root = PathBuf::from(
+            std::env::var_os(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp)).expect("source override env"),
+        );
+        let spec = platform_spec().unwrap();
+        let bundle_root = tmp.path().join("bundle");
+        let expected_root = bundle_root
+            .join("acp")
+            .join("claude-agent-acp")
+            .join("0.39.0")
+            .join(spec.manifest_key);
+        write_fake_local_project_source(&source_root, spec);
+
+        let node_runtime = crate::ResolvedNodeRuntime {
+            source: crate::ResolvedNodeSource::Managed,
+            root: PathBuf::from("/tmp/node"),
+            version: semver::Version::new(24, 11, 0),
+            node_path: PathBuf::from("/usr/bin/true"),
+            npm_path: PathBuf::from("/usr/bin/false"),
+            npm_args_prefix: vec![],
+            npx_path: PathBuf::from("/usr/bin/false"),
+            npx_args_prefix: vec![],
+            env: vec![],
+        };
+        let resolved = prepare_local_project_source_to_bundle_root(
+            ManagedAcpToolId::ClaudeAgentAcp,
+            spec,
+            &node_runtime,
+            &source_root,
+            &expected_root,
+        )
+        .await
+        .expect("local project source should be copied into bundle");
+
+        assert_eq!(resolved.root, expected_root);
+        assert_eq!(resolved.version, "0.39.0");
+        assert!(expected_root.join("manifest.json").is_file());
+        assert!(expected_root.join("dist").join("index.js").is_file());
+        assert!(
+            expected_root
+                .join("node_modules")
+                .join(format!("@anthropic-ai/claude-agent-sdk-{}", spec.manifest_key))
+                .join("claude")
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_local_tarball_override_reports_clear_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tarball = tmp.path().join("missing.tgz");
+        if !crate::test_support::run_in_env_child(
+            "acp_tool_runtime::tests::missing_local_tarball_override_reports_clear_error",
+            |command| {
+                command
+                    .env(local_tarball_env_key(ManagedAcpToolId::ClaudeAgentAcp), &tarball)
+                    .env_remove(local_source_env_key(ManagedAcpToolId::ClaudeAgentAcp));
+            },
+        ) {
+            return;
+        }
+
+        crate::cache::init(tmp.path().join("data"));
+
+        let error = ensure_managed_acp_tool(ManagedAcpToolId::ClaudeAgentAcp)
+            .await
+            .expect_err("missing local tarball should fail");
+
+        assert!(error.to_string().contains("local managed Claude ACP tarball missing"));
     }
 
     #[test]

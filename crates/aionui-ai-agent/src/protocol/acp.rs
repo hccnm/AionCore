@@ -26,11 +26,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use agent_client_protocol::schema::{
-    AGENT_METHOD_NAMES, AuthenticateResponse, ClientNotification, ClientRequest, CloseSessionResponse, ExtResponse,
-    ForkSessionResponse, InitializeRequest, LoadSessionResponse, PromptResponse, ProtocolVersion,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, ResumeSessionResponse,
-    SelectedPermissionOutcome, SessionNotification, SetSessionConfigOptionResponse, SetSessionModeResponse,
-    SetSessionModelResponse,
+    AGENT_METHOD_NAMES, AgentNotification, AuthenticateResponse, ClientNotification, ClientRequest,
+    CloseSessionResponse, ExtResponse, ForkSessionResponse, InitializeRequest, LoadSessionResponse, PromptResponse,
+    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    ResumeSessionResponse, SelectedPermissionOutcome, SessionNotification, SetSessionConfigOptionResponse,
+    SetSessionModeResponse, SetSessionModelResponse,
 };
 use agent_client_protocol::{
     Agent, ByteStreams, Client, ConnectionTo, Responder, on_receive_notification, on_receive_request,
@@ -386,23 +386,14 @@ async fn run_sdk_background(
                 let event_tx = event_tx.clone();
                 let notification_tx = notification_tx.clone();
                 let replay_suppression = Arc::clone(&replay_suppression);
-                async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
-                    // Fan out the raw SDK notification to the manager's apply-loop
-                    // FIRST, so session state is consistent by the time the UI
-                    // event hits the broadcast channel. Swallow send errors — if
-                    // the manager has dropped the receiver, session consistency
-                    // is moot anyway (we're on our way down).
-                    let _ = notification_tx.send(notification.clone()).await;
-
-                    // During a session/load request, the CLI replays historical
-                    // session/update notifications back to us. The frontend
-                    // already renders history from the local DB, so broadcasting
-                    // the replay would produce duplicate UI blocks. Keep feeding
-                    // notification_tx (event_tracker still needs metadata like
-                    // available_commands_update), but skip the UI broadcast.
-                    if !replay_suppression.load(Ordering::Acquire) {
-                        handle_session_notification(notification, &event_tx).await;
-                    }
+                async move |notification: AgentNotification, _cx: ConnectionTo<Agent>| {
+                    handle_agent_notification(
+                        notification,
+                        &event_tx,
+                        &notification_tx,
+                        replay_suppression.load(Ordering::Acquire),
+                    )
+                    .await;
                     Ok(())
                 }
             },
@@ -468,6 +459,40 @@ async fn run_sdk_background(
     }
 }
 
+async fn handle_agent_notification(
+    notification: AgentNotification,
+    event_tx: &broadcast::Sender<AgentStreamEvent>,
+    notification_tx: &mpsc::Sender<SessionNotification>,
+    suppress_replay: bool,
+) {
+    match notification {
+        AgentNotification::SessionNotification(notification) => {
+            // Fan out the raw SDK notification to the manager's apply-loop
+            // FIRST, so session state is consistent by the time the UI
+            // event hits the broadcast channel. Swallow send errors — if
+            // the manager has dropped the receiver, session consistency
+            // is moot anyway (we're on our way down).
+            let _ = notification_tx.send(notification.clone()).await;
+
+            // During a session/load request, the CLI replays historical
+            // session/update notifications back to us. The frontend
+            // already renders history from the local DB, so broadcasting
+            // the replay would produce duplicate UI blocks. Keep feeding
+            // notification_tx (event_tracker still needs metadata like
+            // available_commands_update), but skip the UI broadcast.
+            if !suppress_replay {
+                handle_session_notification(notification, event_tx).await;
+            }
+        }
+        AgentNotification::ExtNotification(notification) => {
+            if !suppress_replay {
+                handle_ext_notification(notification, event_tx).await;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Fan out a CLI session notification to the event broadcast channel.
 async fn handle_session_notification(
     notification: SessionNotification,
@@ -476,6 +501,20 @@ async fn handle_session_notification(
     log_agent_notify("session/update", &json_str(&notification));
 
     let events = stream_event::session_notification_to_events(&notification);
+    send_agent_events(events, event_tx);
+}
+
+async fn handle_ext_notification(
+    notification: agent_client_protocol::schema::ExtNotification,
+    event_tx: &broadcast::Sender<AgentStreamEvent>,
+) {
+    let method = format!("_{}", notification.method);
+    log_agent_notify(&method, notification.params.get());
+    let events = stream_event::ext_notification_to_events(&notification);
+    send_agent_events(events, event_tx);
+}
+
+fn send_agent_events(events: Vec<AgentStreamEvent>, event_tx: &broadcast::Sender<AgentStreamEvent>) {
     for event in events {
         if let Err(e) = event_tx.send(event) {
             // broadcast::SendError means no active receivers — expected when

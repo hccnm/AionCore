@@ -14,6 +14,7 @@ use aionui_runtime::ensure_runtime_command_with_reporter;
 use tracing::{debug, info, warn};
 
 use crate::agent_task::AgentInstance;
+use crate::capability::skill_manager::build_system_instructions;
 use crate::capability::team_guide_prompt;
 use crate::error::AgentError;
 use crate::factory::AgentFactoryDeps;
@@ -24,6 +25,9 @@ use crate::session_context::AionrsSessionBuildContext;
 use crate::types::{AionrsCompatOverrides, AionrsResolvedConfig};
 
 const TEAM_CAPABLE_BACKENDS: &[&str] = &["claude", "codex", "gemini", "aionrs", "codebuddy"];
+const AIONUI_SKILLS_SYSTEM_NOTICE: &str = r#"## AionUI Assistant Skills
+
+The current assistant preset has enabled the following AionUI skills. Their instructions are already available in this system prompt. Follow them directly when they apply, and do not call provider/native skill tools such as `Skill execute` or `skill_execute` to load these AionUI skills."#;
 
 pub(super) async fn build(
     deps: Arc<AgentFactoryDeps>,
@@ -43,6 +47,8 @@ pub(super) async fn build(
             None => rules,
         });
     }
+
+    inject_aionui_skills_into_system_prompt(&mut overrides, &deps.skill_manager).await;
 
     // Inject Guide MCP config for solo (non-team) sessions, mirroring acp.rs.
     // Skip if the conversation already belongs to a team (extra.teamId set).
@@ -194,6 +200,39 @@ pub(super) async fn build(
 
     let agent = AionrsAgentManager::new(ctx.conversation_id, ctx.workspace, config, resume_session).await?;
     Ok(AgentInstance::Aionrs(Arc::new(agent)))
+}
+
+async fn inject_aionui_skills_into_system_prompt(
+    overrides: &mut AionrsBuildExtra,
+    skill_manager: &Arc<crate::capability::skill_manager::AcpSkillManager>,
+) {
+    if overrides.skills.is_empty() {
+        return;
+    }
+
+    let requested = overrides.skills.clone();
+    let _ = skill_manager.discover_by_names(&requested).await;
+
+    let mut definitions = Vec::new();
+    for name in requested {
+        match skill_manager.get_skill(&name).await {
+            Some(definition) => definitions.push(definition),
+            None => warn!(
+                skill = %name,
+                "Aionrs assistant skill snapshot referenced an unavailable skill"
+            ),
+        }
+    }
+
+    if definitions.is_empty() {
+        return;
+    }
+
+    let base = match overrides.system_prompt.take() {
+        Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{AIONUI_SKILLS_SYSTEM_NOTICE}"),
+        _ => AIONUI_SKILLS_SYSTEM_NOTICE.to_owned(),
+    };
+    overrides.system_prompt = Some(build_system_instructions(&base, &definitions));
 }
 
 /// Map AionUi DB platform name to the aionrs provider identifier.
@@ -1116,5 +1155,48 @@ mod tests {
         }
 
         assert_eq!(overrides.system_prompt.as_deref(), Some("Be concise."));
+    }
+
+    #[tokio::test]
+    async fn aionrs_injects_agent_skills_into_system_prompt() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let skill_dir = tmp.path().join("skills").join("test-discovery-rules");
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: test-discovery-rules
+description: Discover test targets from code
+---
+Use the test-cases directory contract and never invent unverified interfaces.
+"#,
+        )
+        .expect("write skill");
+        let paths = Arc::new(aionui_extension::resolve_skill_paths(tmp.path(), tmp.path()));
+        let skill_manager = crate::capability::skill_manager::AcpSkillManager::new(paths);
+        let mut overrides = AionrsBuildExtra {
+            system_prompt: Some("Base preset rules.".to_owned()),
+            skills: vec!["test-discovery-rules".to_owned()],
+            ..Default::default()
+        };
+
+        inject_aionui_skills_into_system_prompt(&mut overrides, &skill_manager).await;
+
+        let prompt = overrides.system_prompt.expect("system prompt should be injected");
+        assert!(prompt.contains("Base preset rules."), "base rules missing: {prompt}");
+        assert!(
+            prompt.contains("## AionUI Assistant Skills"),
+            "skill notice missing: {prompt}"
+        );
+        assert!(prompt.contains("Skill execute"), "native tool guard missing: {prompt}");
+        assert!(prompt.contains("skill_execute"), "native tool guard missing: {prompt}");
+        assert!(
+            prompt.contains("## Skill: test-discovery-rules"),
+            "skill body header missing: {prompt}"
+        );
+        assert!(
+            prompt.contains("Use the test-cases directory contract"),
+            "skill body missing: {prompt}"
+        );
     }
 }

@@ -13,7 +13,7 @@ use aionui_ai_agent::{AgentError, AgentSendError, IWorkerTaskManager};
 
 use crate::response_middleware::{CronCommandResult, CronCreateParams, CronUpdateParams, ICronService};
 use aionui_api_types::{
-    AgentErrorCode, AgentModeResponse, ConversationArtifactKind, GetModelInfoResponse, ModelInfoEntry,
+    AcpExtRequest, AgentErrorCode, AgentModeResponse, ConversationArtifactKind, GetModelInfoResponse, ModelInfoEntry,
     ModelInfoPayload, SetModeRequest, SetModelRequest,
 };
 use aionui_api_types::{
@@ -1361,6 +1361,7 @@ struct MockAgent {
     confirmations: Mutex<Vec<Confirmation>>,
     approval_memory: Mutex<std::collections::HashMap<String, bool>>,
     allow_direct_confirm: bool,
+    acp_ext_hangs: bool,
     /// Optional workspace override; falls back to "/tmp/test" when `None`.
     workspace_override: Option<String>,
 }
@@ -1397,8 +1398,15 @@ impl MockAgent {
             confirmations: Mutex::new(vec![]),
             approval_memory: Mutex::new(std::collections::HashMap::new()),
             allow_direct_confirm: false,
+            acp_ext_hangs: false,
             workspace_override: None,
         }
+    }
+
+    fn with_hanging_acp_ext(conversation_id: &str) -> Self {
+        let mut agent = Self::new(conversation_id);
+        agent.acp_ext_hangs = true;
+        agent
     }
 
     fn with_confirmations(conversation_id: &str, confirmations: Vec<Confirmation>) -> Self {
@@ -1413,6 +1421,7 @@ impl MockAgent {
             confirmations: Mutex::new(confirmations),
             approval_memory: Mutex::new(std::collections::HashMap::new()),
             allow_direct_confirm: false,
+            acp_ext_hangs: false,
             workspace_override: None,
         }
     }
@@ -1429,6 +1438,7 @@ impl MockAgent {
             confirmations: Mutex::new(vec![]),
             approval_memory: Mutex::new(std::collections::HashMap::new()),
             allow_direct_confirm: true,
+            acp_ext_hangs: false,
             workspace_override: None,
         }
     }
@@ -1445,6 +1455,7 @@ impl MockAgent {
             confirmations: Mutex::new(vec![]),
             approval_memory: Mutex::new(std::collections::HashMap::new()),
             allow_direct_confirm: false,
+            acp_ext_hangs: false,
             workspace_override: None,
         }
     }
@@ -1549,6 +1560,13 @@ impl IMockAgent for MockAgent {
     async fn set_model_confirmed(&self, model_id: &str) -> Result<GetModelInfoResponse, AgentError> {
         self.set_model(model_id).await?;
         Ok(Self::build_model_response(model_id))
+    }
+
+    async fn acp_ext_request(&self, method: &str, _params: serde_json::Value) -> Result<serde_json::Value, AgentError> {
+        if self.acp_ext_hangs {
+            std::future::pending::<()>().await;
+        }
+        Ok(json!({ "method": method, "ok": true }))
     }
 }
 
@@ -2164,6 +2182,35 @@ async fn set_model_returns_confirmed_model_even_if_get_model_is_stale() {
         .model_info
         .expect("mock agent should still report model info");
     assert_eq!(stale_model_info.current_model_id.as_deref(), Some("model-a"));
+}
+
+#[tokio::test]
+async fn acp_ext_request_times_out_when_workflow_list_hangs() {
+    let task_mgr = Arc::new(MockTaskManager::new());
+    let (svc, _broadcaster, _repo) = make_service_with_mock_task_manager(task_mgr.clone());
+    let conv = svc.create("user_1", make_create_req()).await.unwrap();
+    task_mgr.insert_agent(
+        &conv.id,
+        AgentInstance::Mock(Arc::new(MockAgent::with_hanging_acp_ext(&conv.id))),
+    );
+
+    let started_at = std::time::Instant::now();
+    let err = svc
+        .acp_ext_request(
+            &conv.id,
+            AcpExtRequest {
+                method: "claude/workflows/list".to_owned(),
+                params: json!({}),
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, ConversationError::Timeout { .. }));
+    assert!(
+        started_at.elapsed() < Duration::from_secs(3),
+        "workflow list should be capped by the service timeout"
+    );
 }
 
 #[tokio::test]

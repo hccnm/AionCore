@@ -8,16 +8,19 @@
 //! over 2000 lines.
 
 use std::path::Component;
+use std::time::Duration;
 
 use aionui_api_types::{
-    AgentModeResponse, GetModelInfoResponse, SetModeRequest, SetModelRequest, SideQuestionRequest,
-    SideQuestionResponse, SlashCommandItem, WorkspaceBrowseQuery, WorkspaceEntry,
+    AcpExtRequest, AcpExtResponse, AgentModeResponse, GetModelInfoResponse, SetModeRequest, SetModelRequest,
+    SideQuestionRequest, SideQuestionResponse, SlashCommandItem, WorkspaceBrowseQuery, WorkspaceEntry,
 };
 
 use crate::ConversationError;
 use crate::service::ConversationService;
 
 const MAX_DIR_DEPTH: usize = 10;
+const WORKFLOW_EXT_LIST_TIMEOUT: Duration = Duration::from_secs(2);
+const WORKFLOW_EXT_MUTATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl ConversationService {
     // ── Mode ────────────────────────────────────────────────────────
@@ -94,6 +97,42 @@ impl ConversationService {
             .get_slash_commands()
             .await
             .map_err(ConversationError::from)
+    }
+
+    pub async fn acp_ext_request(
+        &self,
+        conversation_id: &str,
+        req: AcpExtRequest,
+    ) -> Result<AcpExtResponse, ConversationError> {
+        let method = req.method.trim();
+        if method.is_empty() {
+            return Err(ConversationError::BadRequest {
+                reason: "ACP extension method must not be empty".into(),
+            });
+        }
+        if !method.starts_with("claude/workflows/") {
+            return Err(ConversationError::BadRequest {
+                reason: "Only Claude workflow extension requests are supported".into(),
+            });
+        }
+
+        let timeout = if method == "claude/workflows/list" {
+            WORKFLOW_EXT_LIST_TIMEOUT
+        } else {
+            WORKFLOW_EXT_MUTATION_TIMEOUT
+        };
+        let task = self.task(conversation_id)?;
+        match tokio::time::timeout(timeout, task.acp_ext_request(method, req.params)).await {
+            Ok(result) => result
+                .map(|result| AcpExtResponse { result })
+                .map_err(ConversationError::from),
+            Err(_) => Err(ConversationError::Timeout {
+                reason: format!(
+                    "Claude workflow extension request {method} timed out after {}s",
+                    timeout.as_secs()
+                ),
+            }),
+        }
     }
 
     // ── Side question ───────────────────────────────────────────────

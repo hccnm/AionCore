@@ -1,5 +1,6 @@
 use agent_client_protocol::schema::AvailableCommand;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Data for the `AgentStatus` event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +38,28 @@ pub struct PlanEventData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailableCommandsEventData {
     pub commands: Vec<AvailableCommand>,
+}
+
+/// A Claude dynamic workflow run update promoted from ACP `_meta`.
+///
+/// The payload intentionally keeps the raw workflow object so provider-specific
+/// fields can flow through while Aion adds stable UI hints such as phases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowUpdateEventData {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub workflow: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runs: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_message_subtype: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPhaseData {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Data for the `SkillSuggest` event.

@@ -43,6 +43,9 @@ pub trait IFileService: Send + Sync {
 
     // -- File management --
 
+    /// Create a directory recursively.
+    async fn create_directory(&self, path: &str, workspace: &str) -> Result<(), FileError>;
+
     /// Copy files into `workspace`, preserving directory structure relative to
     /// `source_root`. Returns lists of copied and failed paths.
     async fn copy_files_to_workspace(

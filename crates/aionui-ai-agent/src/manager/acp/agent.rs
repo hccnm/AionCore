@@ -11,14 +11,14 @@ use crate::manager::acp::{
 use crate::manager::process_registry::{register_session_process, unregister_agent_process};
 use crate::protocol::acp::AcpProtocol;
 use crate::protocol::error::{AcpError, CloseReason};
-use crate::protocol::events::AgentStreamEvent;
+use crate::protocol::events::{AgentStreamEvent, TipType, TipsEventData};
 use crate::protocol::send_error::AgentSendError;
 use crate::registry::CatalogSender;
 use crate::shared_kernel::{ModeId, ModelId, SessionId as DomainSessionId};
 use crate::types::SendMessageData;
 use agent_client_protocol::schema::{
-    AvailableCommand, CancelNotification, SessionId, SessionModelState, SessionNotification, SetSessionModeRequest,
-    SetSessionModelRequest, UsageUpdate,
+    AvailableCommand, CancelNotification, ExtRequest, SessionId, SessionModelState, SessionNotification,
+    SetSessionModeRequest, SetSessionModelRequest, UsageUpdate,
 };
 use aionui_api_types::{AgentHandshake, SlashCommandCompletionBehavior, SlashCommandItem};
 use aionui_common::{
@@ -174,6 +174,42 @@ fn matched_slash_command(raw_user_input: &str, commands: &[AvailableCommand]) ->
         .iter()
         .find(|command| command.name == token)
         .map(slash_command_item)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaudePlanShortcut {
+    SwitchOnly,
+    SwitchAndPrompt(String),
+}
+
+fn parse_claude_plan_shortcut(raw_user_input: &str, is_claude_backend: bool) -> Option<ClaudePlanShortcut> {
+    if !is_claude_backend {
+        return None;
+    }
+
+    let trimmed = raw_user_input.trim_start();
+    let rest = trimmed.strip_prefix("/plan")?;
+    if let Some(ch) = rest.chars().next()
+        && !ch.is_whitespace()
+    {
+        return None;
+    }
+
+    let prompt = rest.trim_start();
+    if prompt.is_empty() {
+        Some(ClaudePlanShortcut::SwitchOnly)
+    } else {
+        Some(ClaudePlanShortcut::SwitchAndPrompt(prompt.to_owned()))
+    }
+}
+
+fn claude_plan_mode_switched_tip() -> TipsEventData {
+    TipsEventData {
+        content: String::new(),
+        tip_type: TipType::Info,
+        code: Some("ACP_MODE_SWITCHED_PLAN".into()),
+        params: None,
+    }
 }
 
 /// Manages a single ACP Agent instance.
@@ -423,6 +459,17 @@ impl AcpAgentManager {
         self.params.metadata.backend.as_deref() == Some("claude")
     }
 
+    async fn ensure_claude_plan_mode(&self) -> Result<(), AgentError> {
+        let already_plan = {
+            let session = self.session.read().await;
+            session.current_mode_id().as_deref() == Some("plan")
+        };
+        if already_plan {
+            return Ok(());
+        }
+        self.set_mode("plan").await
+    }
+
     /// Cached model info from the ACP backend, if any has been received.
     pub(crate) async fn model(&self) -> Option<SessionModelState> {
         self.session.read().await.model_info().cloned()
@@ -491,20 +538,23 @@ impl AcpAgentManager {
             return Err(AgentError::from(e));
         }
 
-        let mut session = self.session.write().await;
-        if session.session_id() != Some(session_id.as_str()) {
-            warn!(
-                conversation_id = %self.params.conversation_id,
-                agent_backend = ?self.params.metadata.backend,
-                requested_mode_id = %normalized_mode,
-                confirmed_session_id = %session_id,
-                active_session_id = ?session.session_id(),
-                "acp_set_mode_session_changed"
-            );
-            return Err(AgentError::conflict("Active ACP session changed while applying mode"));
+        {
+            let mut session = self.session.write().await;
+            if session.session_id() != Some(session_id.as_str()) {
+                warn!(
+                    conversation_id = %self.params.conversation_id,
+                    agent_backend = ?self.params.metadata.backend,
+                    requested_mode_id = %normalized_mode,
+                    confirmed_session_id = %session_id,
+                    active_session_id = ?session.session_id(),
+                    "acp_set_mode_session_changed"
+                );
+                return Err(AgentError::conflict("Active ACP session changed while applying mode"));
+            }
+            session.confirm_mode(ModeId::new(&normalized_mode));
+            self.commit_session_changes(&mut session).await;
         }
-        session.confirm_mode(ModeId::new(&normalized_mode));
-        self.commit_session_changes(&mut session).await;
+        self.emit_mode_info_event().await;
         info!(
             conversation_id = %self.params.conversation_id,
             agent_backend = ?self.params.metadata.backend,
@@ -616,6 +666,32 @@ impl AcpAgentManager {
             .unwrap_or_default();
         Ok(items)
     }
+
+    pub(crate) async fn ext_request(&self, method: &str, mut params: Value) -> Result<Value, AgentError> {
+        if method.trim().is_empty() {
+            return Err(AgentError::bad_request("ACP extension method must not be empty"));
+        }
+        if method.starts_with("claude/workflows/")
+            && let Some(session_id) = self.session_id().await
+        {
+            if !params.is_object() {
+                params = Value::Object(serde_json::Map::new());
+            }
+            let obj = params.as_object_mut().expect("workflow ext params must be an object");
+            if !obj.contains_key("sessionId") && !obj.contains_key("session_id") {
+                obj.insert("sessionId".to_owned(), Value::String(session_id));
+            }
+        }
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| AgentError::internal(format!("Failed to encode ACP extension params: {e}")))?;
+        let response = self
+            .protocol
+            .ext_request(ExtRequest::new(method.to_owned(), raw.into()))
+            .await
+            .map_err(AgentError::from)?;
+        serde_json::from_str(response.0.get())
+            .map_err(|e| AgentError::internal(format!("Failed to decode ACP extension response: {e}")))
+    }
 }
 
 impl AcpAgentManager {
@@ -696,11 +772,25 @@ impl AcpAgentManager {
         let sid = self.ensure_session_opened().await.map_err(AcpSendFailure::from)?;
         self.runtime.reset_for_new_turn(ConversationStatus::Running);
         let raw_user_input = data.content.clone();
+        let prompt_input = match parse_claude_plan_shortcut(&raw_user_input, self.is_claude_backend()) {
+            Some(ClaudePlanShortcut::SwitchOnly) => {
+                self.ensure_claude_plan_mode().await.map_err(AcpSendFailure::from)?;
+                return Ok(PromptOutcome::InfoTip {
+                    session_id: sid,
+                    tips: claude_plan_mode_switched_tip(),
+                });
+            }
+            Some(ClaudePlanShortcut::SwitchAndPrompt(prompt)) => {
+                self.ensure_claude_plan_mode().await.map_err(AcpSendFailure::from)?;
+                prompt
+            }
+            None => raw_user_input,
+        };
         let matched_command = {
             let session = self.session.read().await;
             session
                 .available_commands()
-                .and_then(|commands| matched_slash_command(&raw_user_input, commands))
+                .and_then(|commands| matched_slash_command(&prompt_input, commands))
         };
 
         let content = {
@@ -711,7 +801,7 @@ impl AcpAgentManager {
                 skill_manager: &self.skill_manager,
                 runtime: &self.runtime,
             };
-            let transformed = self.pipeline.pre_send(&mut ctx, data.content.clone()).await;
+            let transformed = self.pipeline.pre_send(&mut ctx, prompt_input).await;
             self.commit_session_changes(&mut s).await;
             transformed
         };
@@ -978,7 +1068,7 @@ impl AcpAgentManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{exit_status_parts, user_facing_message};
+    use super::{ClaudePlanShortcut, exit_status_parts, parse_claude_plan_shortcut, user_facing_message};
     use crate::error::AgentError;
     use crate::manager::acp::AcpSession;
     use agent_client_protocol::schema::AvailableCommand;
@@ -1165,6 +1255,34 @@ mod tests {
             Some(aionui_api_types::SlashCommandCompletionBehavior::NeutralTipOnEmpty)
         );
         assert_eq!(matched.empty_turn_tip_code.as_deref(), None);
+    }
+
+    #[test]
+    fn claude_plan_shortcut_detects_switch_only() {
+        assert_eq!(
+            parse_claude_plan_shortcut("/plan", true),
+            Some(ClaudePlanShortcut::SwitchOnly)
+        );
+        assert_eq!(
+            parse_claude_plan_shortcut("   /plan   ", true),
+            Some(ClaudePlanShortcut::SwitchOnly)
+        );
+    }
+
+    #[test]
+    fn claude_plan_shortcut_extracts_follow_up_prompt() {
+        assert_eq!(
+            parse_claude_plan_shortcut("/plan 修改 execute-order-test-cases.js", true),
+            Some(ClaudePlanShortcut::SwitchAndPrompt(
+                "修改 execute-order-test-cases.js".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn claude_plan_shortcut_ignores_non_claude_or_longer_command_names() {
+        assert_eq!(parse_claude_plan_shortcut("/plan hi", false), None);
+        assert_eq!(parse_claude_plan_shortcut("/planner hi", true), None);
     }
 
     // Close-reason compositional tests live in `agent_close.rs` so that

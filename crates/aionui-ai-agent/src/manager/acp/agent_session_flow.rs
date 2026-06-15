@@ -1,6 +1,6 @@
 use crate::error::AgentError;
-use crate::manager::acp::AcpAgentManager;
 use crate::manager::acp::mode_normalize::agent_metadata_uses_meta_resume;
+use crate::manager::acp::{AcpAgentManager, AcpSession};
 use crate::protocol::error::AcpError;
 use crate::protocol::events::{
     AgentStreamEvent, AvailableCommandsEventData, ErrorEventData, SessionAssignedEventData, StartEventData, TipType,
@@ -278,6 +278,13 @@ impl AcpAgentManager {
         ))
     }
 
+    pub(super) async fn emit_mode_info_event(&self) {
+        let session = self.session.read().await;
+        if let Some(v) = mode_info_value(&session) {
+            self.runtime.emit(AgentStreamEvent::AcpModeInfo(v));
+        }
+    }
+
     /// Emit model/mode/config events from the session aggregate so the frontend
     /// receives the initial session state via WebSocket immediately after
     /// session creation or load.
@@ -311,9 +318,7 @@ impl AcpAgentManager {
                 self.runtime.emit(AgentStreamEvent::AcpModelInfo(v));
             }
         }
-        if let Some(modes) = session.modes()
-            && let Some(v) = sdk_to_snake_value(&modes)
-        {
+        if let Some(v) = mode_info_value(&session) {
             self.runtime.emit(AgentStreamEvent::AcpModeInfo(v));
         }
         if let Some(config_options) = session.config_options()
@@ -340,6 +345,10 @@ impl AcpAgentManager {
         let detail = super::stderr_error_extractor::extract_error_message(&tail)?;
         Some(classify_empty_turn_stderr_error(&detail))
     }
+}
+
+fn mode_info_value(session: &AcpSession) -> Option<Value> {
+    session.modes().and_then(sdk_to_snake_value)
 }
 
 /// Drain the supplied turn-scoped receiver and return `true` when the turn
@@ -380,6 +389,7 @@ fn event_is_user_visible_output(event: &AgentStreamEvent) -> bool {
             | AgentStreamEvent::AcpToolCall(_)
             | AgentStreamEvent::ToolGroup(_)
             | AgentStreamEvent::Plan(_)
+            | AgentStreamEvent::WorkflowUpdate(_)
             | AgentStreamEvent::Permission(_)
             | AgentStreamEvent::AcpPermission(_)
     )

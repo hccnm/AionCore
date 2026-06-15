@@ -92,6 +92,22 @@ pub struct CancelConversationResponse {
     pub runtime: ConversationRuntimeSummary,
 }
 
+/// Body for `POST /api/conversations/:id/acp-ext`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpExtRequest {
+    /// Extension method without the leading underscore, e.g.
+    /// `claude/workflows/stop` maps to `_claude/workflows/stop` on the ACP wire.
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// Response for `POST /api/conversations/:id/acp-ext`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpExtResponse {
+    pub result: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationRuntimeStateKind {

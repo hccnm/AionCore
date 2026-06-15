@@ -508,6 +508,13 @@ mod tests {
         }
     }
 
+    fn aionrs_context(context: AgentSessionContext) -> AionrsSessionBuildContext {
+        match context.kind {
+            AgentSessionKind::Aionrs(aionrs) => *aionrs,
+            other => panic!("expected Aionrs context, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn acp_agent_id_takes_priority_over_backend() {
         let repos = setup().await;
@@ -645,6 +652,29 @@ mod tests {
         assert_eq!(context.model.provider_id, "provider-1");
         assert_eq!(context.model.model, "gpt-5");
         assert_eq!(context.model.use_model.as_deref(), Some("gpt-5.1"));
+    }
+
+    #[tokio::test]
+    async fn aionrs_context_preserves_agent_skill_snapshot() {
+        let repos = setup().await;
+        let row = row(
+            "aionrs",
+            serde_json::json!({
+                "skills": ["test-discovery-rules", "code-test-case-generator"]
+            }),
+            None,
+        );
+
+        let context = repos.builder().build(&row).await.unwrap();
+        assert_eq!(
+            context.skills,
+            vec!["test-discovery-rules".to_owned(), "code-test-case-generator".to_owned()]
+        );
+        let aionrs = aionrs_context(context);
+        assert_eq!(
+            aionrs.config.skills,
+            vec!["test-discovery-rules".to_owned(), "code-test-case-generator".to_owned()]
+        );
     }
 
     #[tokio::test]

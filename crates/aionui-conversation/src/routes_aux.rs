@@ -2,8 +2,8 @@
 
 use crate::state::ConversationRouterState;
 use aionui_api_types::{
-    AgentModeResponse, ApiResponse, GetModelInfoResponse, SetModeRequest, SetModelRequest, SideQuestionRequest,
-    SideQuestionResponse, SlashCommandItem, WorkspaceBrowseQuery, WorkspaceEntry,
+    AcpExtRequest, AcpExtResponse, AgentModeResponse, ApiResponse, GetModelInfoResponse, SetModeRequest,
+    SetModelRequest, SideQuestionRequest, SideQuestionResponse, SlashCommandItem, WorkspaceBrowseQuery, WorkspaceEntry,
 };
 use aionui_auth::CurrentUser;
 use aionui_common::ApiError;
@@ -19,6 +19,7 @@ pub fn conversation_ops_routes(state: ConversationRouterState) -> Router {
         .route("/api/conversations/{id}/side-question", post(side_question))
         .route("/api/conversations/{id}/slash-commands", get(get_slash_commands))
         .route("/api/conversations/{id}/usage", get(get_usage))
+        .route("/api/conversations/{id}/acp-ext", post(acp_ext_request))
         .route("/api/conversations/{id}/mode", get(get_mode).put(set_mode))
         .route("/api/conversations/{id}/model", get(get_model).put(set_model))
         .route("/api/conversations/{id}/workspace", get(browse_workspace))
@@ -78,6 +79,18 @@ async fn get_usage(
 ) -> Result<Json<ApiResponse<Option<serde_json::Value>>>, ApiError> {
     Ok(Json(ApiResponse::ok(
         state.service.get_usage(&id).await.map_err(ApiError::from)?,
+    )))
+}
+
+async fn acp_ext_request(
+    State(state): State<ConversationRouterState>,
+    Extension(_user): Extension<CurrentUser>,
+    Path(id): Path<String>,
+    body: Result<Json<AcpExtRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<AcpExtResponse>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    Ok(Json(ApiResponse::ok(
+        state.service.acp_ext_request(&id, req).await.map_err(ApiError::from)?,
     )))
 }
 

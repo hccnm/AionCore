@@ -195,6 +195,7 @@ impl ChannelMessageService {
             | AgentStreamEvent::AcpPermission(_)
             | AgentStreamEvent::AcpToolCall(_)
             | AgentStreamEvent::AvailableCommands(_)
+            | AgentStreamEvent::WorkflowUpdate(_)
             | AgentStreamEvent::SkillSuggest(_)
             | AgentStreamEvent::CronTrigger(_)
             | AgentStreamEvent::AcpModelInfo(_)

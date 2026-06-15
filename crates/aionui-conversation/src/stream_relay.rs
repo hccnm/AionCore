@@ -433,6 +433,7 @@ impl StreamRelay {
             AgentStreamEvent::AcpPromptHookWarning(_) => "AcpPromptHookWarning",
             AgentStreamEvent::SlashCommandsUpdated(_) => "SlashCommandsUpdated",
             AgentStreamEvent::AvailableCommands(_) => "AvailableCommands",
+            AgentStreamEvent::WorkflowUpdate(_) => "WorkflowUpdate",
             AgentStreamEvent::Finish(_) => "Finish",
             AgentStreamEvent::Error(_) => "Error",
             AgentStreamEvent::System(_) => "System",

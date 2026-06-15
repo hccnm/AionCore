@@ -10,11 +10,12 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use aionui_api_types::{
     ApiResponse, BrowseDirectoryQuery, BrowseDirectoryResponse, CancelZipRequest, CopyFilesRequest, CopyFilesResponse,
-    CreateTempFileRequest, DirOrFileResponse, FetchRemoteImageRequest, FileChangeInfoResponse, FileMetadataResponse,
-    FileWatchRequest, GetFileMetadataRequest, GetFilesByDirRequest, GetImageBase64Request, ListWorkspaceFilesRequest,
-    ReadFileBufferRequest, ReadFileRequest, RemoveEntryRequest, RenameRequest, RenameResponse, SnapshotBaselineRequest,
-    SnapshotCompareResponse, SnapshotDiscardRequest, SnapshotInfoResponse, SnapshotStageRequest,
-    SnapshotWorkspaceRequest, WorkspaceFlatFileResponse, WorkspaceOfficeWatchRequest, WriteFileRequest, ZipRequest,
+    CreateDirectoryRequest, CreateTempFileRequest, DirOrFileResponse, FetchRemoteImageRequest, FileChangeInfoResponse,
+    FileMetadataResponse, FileWatchRequest, GetFileMetadataRequest, GetFilesByDirRequest, GetImageBase64Request,
+    ListWorkspaceFilesRequest, ReadFileBufferRequest, ReadFileRequest, RemoveEntryRequest, RenameRequest,
+    RenameResponse, SnapshotBaselineRequest, SnapshotCompareResponse, SnapshotDiscardRequest, SnapshotInfoResponse,
+    SnapshotStageRequest, SnapshotWorkspaceRequest, WorkspaceFlatFileResponse, WorkspaceOfficeWatchRequest,
+    WriteFileRequest, ZipRequest,
 };
 use aionui_common::ApiError;
 use aionui_common::constants::UPLOAD_MAX_SIZE;
@@ -129,6 +130,7 @@ pub fn file_routes(state: FileRouterState) -> Router {
         .route("/api/fs/read", post(read_file))
         .route("/api/fs/read-buffer", post(read_file_buffer))
         .route("/api/fs/write", post(write_file))
+        .route("/api/fs/mkdir", post(create_directory))
         .route("/api/fs/copy", post(copy_files))
         .route("/api/fs/remove", post(remove_entry))
         .route("/api/fs/rename", post(rename_entry))
@@ -262,6 +264,21 @@ async fn write_file(
         .write_file(&req.path, req.data.as_bytes(), &workspace)
         .await?;
     Ok(Json(ApiResponse::ok(ok)))
+}
+
+async fn create_directory(
+    State(state): State<FileRouterState>,
+    body: Result<Json<CreateDirectoryRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<bool>>, ApiError> {
+    let Json(req) = body.map_err(ApiError::from)?;
+    let workspace = req.workspace.unwrap_or_else(|| {
+        std::path::Path::new(&req.path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    state.file_service.create_directory(&req.path, &workspace).await?;
+    Ok(Json(ApiResponse::ok(true)))
 }
 
 async fn copy_files(

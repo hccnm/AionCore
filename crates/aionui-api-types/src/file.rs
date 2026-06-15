@@ -54,6 +54,15 @@ pub struct WriteFileRequest {
     pub workspace: Option<String>,
 }
 
+/// Request body for `POST /api/fs/mkdir` — create a directory recursively.
+#[derive(Debug, Deserialize)]
+pub struct CreateDirectoryRequest {
+    pub path: String,
+    /// Workspace root used for sandbox validation and cache invalidation.
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
 /// Request body for `POST /api/fs/copy` — copy files to workspace.
 #[derive(Debug, Deserialize)]
 pub struct CopyFilesRequest {

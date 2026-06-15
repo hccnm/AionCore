@@ -177,6 +177,7 @@ mod tests {
         let extra: AionrsBuildExtra = serde_json::from_value(json).unwrap();
         assert!(extra.system_prompt.is_none());
         assert!(extra.preset_rules.is_none());
+        assert!(extra.skills.is_empty());
         assert_eq!(extra.max_tokens, 8192);
         assert!(extra.max_turns.is_none());
     }
@@ -185,11 +186,16 @@ mod tests {
     fn aionrs_build_extra_serde_with_overrides() {
         let json = json!({
             "system_prompt": "You are a helpful assistant.",
+            "skills": ["test-discovery-rules", "code-test-case-generator"],
             "max_tokens": 4096,
             "max_turns": 10
         });
         let extra: AionrsBuildExtra = serde_json::from_value(json).unwrap();
         assert_eq!(extra.system_prompt.unwrap(), "You are a helpful assistant.");
+        assert_eq!(
+            extra.skills,
+            vec!["test-discovery-rules".to_owned(), "code-test-case-generator".to_owned()]
+        );
         assert_eq!(extra.max_tokens, 4096);
         assert_eq!(extra.max_turns.unwrap(), 10);
     }

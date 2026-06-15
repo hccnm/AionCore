@@ -178,6 +178,7 @@ fn event_type_name(event: &AgentStreamEvent) -> &'static str {
         AgentStreamEvent::AcpPermission(_) => "AcpPermission",
         AgentStreamEvent::AcpToolCall(_) => "AcpToolCall",
         AgentStreamEvent::AvailableCommands(_) => "AvailableCommands",
+        AgentStreamEvent::WorkflowUpdate(_) => "WorkflowUpdate",
         AgentStreamEvent::SkillSuggest(_) => "SkillSuggest",
         AgentStreamEvent::CronTrigger(_) => "CronTrigger",
         AgentStreamEvent::AcpModelInfo(_) => "AcpModelInfo",

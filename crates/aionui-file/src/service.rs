@@ -333,6 +333,48 @@ fn write_file_sync(path: &Path, data: &[u8]) -> Result<bool, FileError> {
     Ok(true)
 }
 
+/// Create a directory recursively.
+fn create_directory_sync(path: &Path) -> Result<(), FileError> {
+    std::fs::create_dir_all(path)
+        .map_err(|e| FileError::Internal(format!("cannot create directory '{}': {e}", path.display())))?;
+    Ok(())
+}
+
+/// Validate a directory creation target whose intermediate directories may not
+/// exist yet. This mirrors `create_dir_all`: the nearest existing ancestor must
+/// still live under an allowed root.
+fn validate_directory_create_path(path: &str, allowed_roots: &[&Path]) -> Result<PathBuf, FileError> {
+    let target = Path::new(path);
+    if target.as_os_str().is_empty() {
+        return Err(FileError::BadRequest("path is empty".to_string()));
+    }
+
+    let mut ancestor = target;
+    while !ancestor.exists() {
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| FileError::BadRequest(format!("path '{}' has no existing parent directory", path)))?;
+    }
+
+    let canonical_ancestor = std::fs::canonicalize(ancestor)
+        .map_err(|e| FileError::BadRequest(format!("cannot resolve parent of '{}': {}", path, e)))?;
+
+    let is_allowed = allowed_roots.iter().any(|root| match std::fs::canonicalize(root) {
+        Ok(canonical_root) => canonical_ancestor.starts_with(&canonical_root),
+        Err(_) => false,
+    });
+
+    if !is_allowed {
+        return Err(FileError::PathOutsideSandbox {
+            message: format!("path '{}' is outside the allowed sandbox", path),
+            field: Some("path"),
+            operation: Some("create_directory"),
+        });
+    }
+
+    Ok(target.to_path_buf())
+}
+
 /// Split a file name into `(base, ext)` where `ext` includes the leading dot.
 ///
 /// Uses the **last** `.` as the extension boundary (matching macOS Finder and
@@ -690,7 +732,7 @@ impl crate::traits::IFileService for FileService {
         }
 
         let roots = self.allowed_roots_refs();
-        let canonical = validate_path_for_write(path, &roots)?;
+        let canonical = validate_directory_create_path(path, &roots)?;
 
         let path_owned = canonical.clone();
         let data_owned = data.to_vec();
@@ -726,6 +768,30 @@ impl crate::traits::IFileService for FileService {
         }
 
         Ok(true)
+    }
+
+    async fn create_directory(&self, path: &str, workspace: &str) -> Result<(), FileError> {
+        if has_traversal(path) {
+            return Err(FileError::BadRequest(format!(
+                "path '{}' contains invalid traversal patterns",
+                path
+            )));
+        }
+
+        let roots = self.allowed_roots_refs();
+        let canonical = validate_path_for_write(path, &roots)?;
+        let path_owned = canonical.clone();
+
+        tokio::task::spawn_blocking(move || create_directory_sync(&path_owned))
+            .await
+            .map_err(|e| FileError::Internal(format!("create directory task failed: {e}")))??;
+
+        let workspace_path = Path::new(workspace);
+        if let Ok(canonical_ws) = std::fs::canonicalize(workspace_path) {
+            self.invalidate_cache(&canonical_ws.to_string_lossy());
+        }
+
+        Ok(())
     }
 
     async fn copy_files_to_workspace(
@@ -1424,6 +1490,28 @@ mod tests {
         let ok = write_file_sync(&file, &data).unwrap();
         assert!(ok);
         assert_eq!(fs::read(&file).unwrap(), data);
+    }
+
+    // -- create_directory_sync tests --
+
+    #[test]
+    fn create_directory_sync_creates_nested_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join(".claude").join("workflows");
+
+        create_directory_sync(&target).unwrap();
+
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn validate_directory_create_path_allows_missing_nested_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join(".claude").join("workflows");
+
+        let validated = validate_directory_create_path(target.to_str().unwrap(), &[dir.path()]).unwrap();
+
+        assert_eq!(validated, target);
     }
 
     // -- remove_entry_sync tests (task 7.5) --
