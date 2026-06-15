@@ -143,6 +143,48 @@
         ]
       },
       "models": []
+    },
+    {
+      "id": "code-test-case-agent",
+      "name": "Code Test Case Agent",
+      "name_i18n": {
+        "en-US": "Code Test Case Agent",
+        "zh-CN": "代码测试用例 Agent"
+      },
+      "description": "Generate directory-style functional test-cases from an existing project, with optional functional-test JSON as scenario input. Focused on engineering tests only.",
+      "description_i18n": {
+        "en-US": "Generate directory-style functional test-cases from an existing project, with optional functional-test JSON as scenario input. Focused on engineering tests only.",
+        "zh-CN": "基于现有代码项目生成目录式功能测试用例；功能测试 JSON 可选，仅作为场景输入。只面向工程测试。"
+      },
+      "avatar": "🧪",
+      "preset_agent_type": "aionrs",
+      "enabled_skills": [
+        "test-discovery-rules",
+        "code-test-case-generator",
+        "code-test-runner"
+      ],
+      "custom_skill_names": [],
+      "disabled_builtin_skills": [],
+      "rule_file": "rules/code-test-case-agent.{locale}.md",
+      "skill_file": "skills/code-test-case-agent-skills.{locale}.md",
+      "prompts": [
+        "Analyze this codebase and generate missing test-cases for the selected feature, then run the smallest relevant case verification command.",
+        "Use the attached functional test JSON to generate directory-style project test-cases and verify them.",
+        "Find a high-value untested path in this module, write case[version].caseName.json files in the existing test-cases style, and verify them."
+      ],
+      "prompts_i18n": {
+        "en-US": [
+          "Analyze this codebase and generate missing test-cases for the selected feature, then run the smallest relevant case verification command.",
+          "Use the attached functional test JSON to generate directory-style project test-cases and verify them.",
+          "Find a high-value untested path in this module, write case[version].caseName.json files in the existing test-cases style, and verify them."
+        ],
+        "zh-CN": [
+          "分析这个代码目录，为选中的功能补充 test-cases 目录式功能测试用例，并运行最小相关验证命令。",
+          "使用附加的功能测试 JSON 生成项目内目录式 case JSON，并完成验证。",
+          "在这个模块里找一个高价值未覆盖路径，按现有 test-cases 风格写 case[version].caseName.json 并验证。"
+        ]
+      },
+      "models": []
     }
   ]
 }

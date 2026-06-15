@@ -278,8 +278,8 @@ mod tests {
     #[test]
     fn load_embedded_has_expected_builtins() {
         let reg = BuiltinAssistantRegistry::load_embedded();
-        assert_eq!(reg.len(), 1, "MVP ships a single system assistant");
         assert!(reg.has("ai-product-manager"));
+        assert!(reg.has("code-test-case-agent"));
     }
 
     #[test]
@@ -301,6 +301,37 @@ mod tests {
             .expect("AI PM en-US skill usage should resolve from the embedded bundle");
         let text = std::str::from_utf8(&bytes).expect("skill file should be valid utf-8");
         assert!(text.contains("interactive-prototype"));
+    }
+
+    #[test]
+    fn load_embedded_code_test_case_agent_assets() {
+        let reg = BuiltinAssistantRegistry::load_embedded();
+        let assistant = reg
+            .get("code-test-case-agent")
+            .expect("code-test-case-agent should be shipped as a built-in assistant");
+
+        assert_eq!(assistant.preset_agent_type, "aionrs");
+        assert_eq!(
+            assistant.enabled_skills,
+            vec![
+                "test-discovery-rules".to_owned(),
+                "code-test-case-generator".to_owned(),
+                "code-test-runner".to_owned(),
+            ]
+        );
+
+        let rule = reg
+            .rule_bytes("code-test-case-agent", "zh-CN")
+            .expect("code-test-case-agent zh-CN rule should resolve from embedded assets");
+        let rule_text = std::str::from_utf8(&rule).expect("rule should be valid utf-8");
+        assert!(rule_text.contains("不负责产品方案"));
+        assert!(rule_text.contains("功能测试 JSON 是可选输入"));
+
+        let skill = reg
+            .skill_bytes("code-test-case-agent", "en-US")
+            .expect("code-test-case-agent en-US skill summary should resolve from embedded assets");
+        let skill_text = std::str::from_utf8(&skill).expect("skill summary should be valid utf-8");
+        assert!(skill_text.contains("engineering test"));
     }
 
     #[test]

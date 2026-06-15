@@ -182,6 +182,30 @@ async fn builtin_skill_read_opt_in_returns_frontmatter_content() {
 }
 
 #[tokio::test]
+async fn builtin_skill_read_code_test_case_generator_returns_content() {
+    let fx = fixture_embedded().await;
+
+    let resp = fx
+        .app
+        .clone()
+        .oneshot(json_with_token(
+            "POST",
+            "/api/skills/builtin-skill",
+            json!({"file_name": "code-test-case-generator/SKILL.md"}),
+            &fx.token,
+            &fx.csrf,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_json(resp).await;
+    let content = json["data"].as_str().unwrap();
+    assert!(content.contains("name: code-test-case-generator"));
+    assert!(content.contains("test-cases/<system>/<feature>/case[version].caseName.json"));
+}
+
+#[tokio::test]
 async fn builtin_skill_missing_file_returns_empty_string() {
     let fx = fixture_embedded().await;
 
@@ -279,6 +303,31 @@ async fn list_skills_builtin_entries_carry_relative_location() {
     }
     assert!(saw_builtin, "expected at least one builtin entry");
     assert!(saw_custom, "expected the seeded custom entry");
+}
+
+#[tokio::test]
+async fn list_skills_includes_code_test_agent_builtin_skills() {
+    let fx = fixture_embedded().await;
+
+    let resp = fx
+        .app
+        .clone()
+        .oneshot(get_with_token("/api/skills", &fx.token))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_json(resp).await;
+    let arr = json["data"].as_array().unwrap();
+    for name in ["test-discovery-rules", "code-test-case-generator", "code-test-runner"] {
+        let item = arr
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap_or_else(|| panic!("missing builtin skill {name}"));
+        assert_eq!(item["source"], "builtin");
+        assert_eq!(item["is_custom"], false);
+        assert_eq!(item["relative_location"], format!("{name}/SKILL.md"));
+    }
 }
 
 // ===========================================================================
