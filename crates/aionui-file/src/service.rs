@@ -732,7 +732,7 @@ impl crate::traits::IFileService for FileService {
         }
 
         let roots = self.allowed_roots_refs();
-        let canonical = validate_directory_create_path(path, &roots)?;
+        let canonical = validate_path_for_write(path, &roots)?;
 
         let path_owned = canonical.clone();
         let data_owned = data.to_vec();
