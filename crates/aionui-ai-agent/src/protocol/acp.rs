@@ -484,10 +484,8 @@ async fn handle_agent_notification(
                 handle_session_notification(notification, event_tx).await;
             }
         }
-        AgentNotification::ExtNotification(notification) => {
-            if !suppress_replay {
-                handle_ext_notification(notification, event_tx).await;
-            }
+        AgentNotification::ExtNotification(notification) if !suppress_replay => {
+            handle_ext_notification(notification, event_tx).await;
         }
         _ => {}
     }
