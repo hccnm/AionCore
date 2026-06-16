@@ -668,7 +668,20 @@ fn classify_provider_text(lower: &str) -> Option<ClassifiedError> {
             Some(AgentErrorResolutionTarget::ProviderSettings),
         ));
     }
-    if contains_any(lower, &["429", "rate limit", "rate_limit", "quota"]) {
+    if contains_any(
+        lower,
+        &[
+            "429",
+            "529",
+            "rate limit",
+            "rate_limit",
+            "quota",
+            "访问量过大",
+            "try again in a moment",
+            "temporarily unavailable",
+            "server-side issue",
+        ],
+    ) {
         return Some(provider_error(
             "The model provider rate limited the request",
             AgentErrorCode::UserLlmProviderRateLimited,
@@ -1135,6 +1148,16 @@ mod tests {
         ));
         assert_eq!(err.stream_error().retryable, Some(true));
         assert_eq!(err.stream_error().feedback_recommended, Some(false));
+    }
+
+    #[test]
+    fn classifies_provider_529_capacity_error_as_rate_limited() {
+        assert_classification(
+            "API Error: 529 [1305][该模型当前访问量过大，请您稍后再试] [20260615140755befca509d4084680]. This is a server-side issue, usually temporary — try again in a moment.",
+            AgentErrorCode::UserLlmProviderRateLimited,
+            AgentErrorOwnership::UserLlmProvider,
+            AgentErrorResolutionKind::Retry,
+        );
     }
 
     #[test]

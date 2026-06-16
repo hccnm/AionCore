@@ -13,7 +13,9 @@ use crate::error::FileError;
 use aionui_api_types::WebSocketMessage;
 use aionui_realtime::EventBroadcaster;
 
-use crate::path_safety::{has_traversal, validate_path, validate_path_for_write, validate_path_with_extra_root};
+use crate::path_safety::{
+    has_traversal, validate_path, validate_path_for_create_dir, validate_path_for_write, validate_path_with_extra_root,
+};
 use crate::types::{
     ContentUpdateEvent, ContentUpdateOperation, CopyResult, DirOrFile, FileMetadata, WorkspaceFlatFile, ZipEntry,
 };
@@ -338,41 +340,6 @@ fn create_directory_sync(path: &Path) -> Result<(), FileError> {
     std::fs::create_dir_all(path)
         .map_err(|e| FileError::Internal(format!("cannot create directory '{}': {e}", path.display())))?;
     Ok(())
-}
-
-/// Validate a directory creation target whose intermediate directories may not
-/// exist yet. This mirrors `create_dir_all`: the nearest existing ancestor must
-/// still live under an allowed root.
-fn validate_directory_create_path(path: &str, allowed_roots: &[&Path]) -> Result<PathBuf, FileError> {
-    let target = Path::new(path);
-    if target.as_os_str().is_empty() {
-        return Err(FileError::BadRequest("path is empty".to_string()));
-    }
-
-    let mut ancestor = target;
-    while !ancestor.exists() {
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| FileError::BadRequest(format!("path '{}' has no existing parent directory", path)))?;
-    }
-
-    let canonical_ancestor = std::fs::canonicalize(ancestor)
-        .map_err(|e| FileError::BadRequest(format!("cannot resolve parent of '{}': {}", path, e)))?;
-
-    let is_allowed = allowed_roots.iter().any(|root| match std::fs::canonicalize(root) {
-        Ok(canonical_root) => canonical_ancestor.starts_with(&canonical_root),
-        Err(_) => false,
-    });
-
-    if !is_allowed {
-        return Err(FileError::PathOutsideSandbox {
-            message: format!("path '{}' is outside the allowed sandbox", path),
-            field: Some("path"),
-            operation: Some("create_directory"),
-        });
-    }
-
-    Ok(target.to_path_buf())
 }
 
 /// Split a file name into `(base, ext)` where `ext` includes the leading dot.
@@ -779,7 +746,11 @@ impl crate::traits::IFileService for FileService {
         }
 
         let roots = self.allowed_roots_refs();
-        let canonical = validate_path_for_write(path, &roots)?;
+        // Use validate_path_for_create_dir (not validate_path_for_write) so that
+        // `create_dir_all` can create arbitrarily nested missing directories, e.g.
+        // `workspace/.claude/workflows`, while still requiring the nearest existing
+        // ancestor to live under an allowed root.
+        let canonical = validate_path_for_create_dir(path, &roots)?;
         let path_owned = canonical.clone();
 
         tokio::task::spawn_blocking(move || create_directory_sync(&path_owned))
@@ -1504,14 +1475,49 @@ mod tests {
         assert!(target.is_dir());
     }
 
-    #[test]
-    fn validate_directory_create_path_allows_missing_nested_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join(".claude").join("workflows");
+    // Business-level coverage for `create_directory`: the service must accept
+    // `create_dir_all` style targets where intermediate directories do not exist
+    // yet (regression for the dead-code `validate_directory_create_path` that was
+    // never wired up — previously this was rejected by `validate_path_for_write`
+    // because the immediate parent did not exist).
+    #[tokio::test]
+    async fn create_directory_creates_missing_nested_directories() {
+        use crate::traits::IFileService;
 
-        let validated = validate_directory_create_path(target.to_str().unwrap(), &[dir.path()]).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let svc = crate::service::FileService::new(Arc::new(NullBroadcaster), vec![root.path().to_path_buf()]);
+        let workspace = root.path().to_string_lossy().into_owned();
+        let target = root.path().join(".claude").join("workflows");
+        let target_str = target.to_string_lossy().into_owned();
 
-        assert_eq!(validated, target);
+        svc.create_directory(&target_str, &workspace).await.unwrap();
+
+        assert!(target.is_dir());
+    }
+
+    #[tokio::test]
+    async fn create_directory_rejects_path_outside_sandbox() {
+        use crate::traits::IFileService;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let svc = crate::service::FileService::new(Arc::new(NullBroadcaster), vec![root.path().to_path_buf()]);
+        let workspace = root.path().to_string_lossy().into_owned();
+        let target = outside.path().join("evil").join("nested");
+        let target_str = target.to_string_lossy().into_owned();
+
+        let err = svc.create_directory(&target_str, &workspace).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FileError::PathOutsideSandbox {
+                    operation: Some("create_directory"),
+                    ..
+                }
+            ),
+            "unexpected error: {err}"
+        );
+        assert!(!target.exists());
     }
 
     // -- remove_entry_sync tests (task 7.5) --

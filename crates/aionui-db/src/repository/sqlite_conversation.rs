@@ -683,6 +683,8 @@ fn bind_value_as<'q, T>(
 /// clause parts and bind values. Used by both `list_paginated` and the count
 /// query to keep filter logic in one place.
 fn append_filter_conditions(filters: &ConversationFilters, where_parts: &mut Vec<String>, binds: &mut Vec<BindValue>) {
+    where_parts.push("COALESCE(json_extract(c.extra, '$.guid_draft'), 0) != 1".to_string());
+
     if let Some(ref source) = filters.source {
         where_parts.push("c.source = ?".to_string());
         binds.push(BindValue::Str(source.clone()));
@@ -957,6 +959,37 @@ mod tests {
         assert_eq!(result.items[0].name, "Third");
         assert_eq!(result.items[1].name, "Second");
         assert_eq!(result.items[2].name, "First");
+    }
+
+    #[tokio::test]
+    async fn list_excludes_guid_draft_conversations() {
+        let (repo, _db) = setup().await;
+
+        let mut visible = sample_conversation(SYSTEM_USER_ID);
+        visible.name = "Visible".to_string();
+        visible.updated_at = 2000;
+        repo.create(&visible).await.unwrap();
+
+        let mut draft = sample_conversation(SYSTEM_USER_ID);
+        draft.name = "Guid Draft".to_string();
+        draft.extra = r#"{"workspace":"/home/user/project","guid_draft":true}"#.to_string();
+        draft.updated_at = 3000;
+        repo.create(&draft).await.unwrap();
+
+        let result = repo
+            .list_paginated(
+                SYSTEM_USER_ID,
+                &ConversationFilters {
+                    limit: 20,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.total, 1);
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, visible.id);
     }
 
     #[tokio::test]

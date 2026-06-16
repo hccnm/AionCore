@@ -90,6 +90,56 @@ pub fn validate_path_for_write(path: &str, allowed_roots: &[&Path]) -> Result<Pa
     Ok(canonical_parent.join(file_name))
 }
 
+/// Like [`validate_path`] but for `create_dir_all` style targets whose
+/// intermediate directories may not exist yet.
+///
+/// Unlike [`validate_path_for_write`] (which canonicalizes the immediate
+/// `parent()`), this walks *up* to the nearest existing ancestor and checks
+/// that one lives under an allowed root. This mirrors `create_dir_all`: a
+/// target like `root/.claude/workflows` (where neither `.claude` nor
+/// `workflows` exists yet) is accepted as long as `root` is in the sandbox.
+///
+/// Returns the original target path (not canonicalized), since the leaf and
+/// any intermediate components do not exist yet.
+///
+/// # Errors
+///
+/// - `FileError::BadRequest` if `path` is empty or has no existing ancestor
+///   that can be canonicalized.
+/// - `FileError::PathOutsideSandbox` with `operation: "create_directory"` if
+///   the nearest existing ancestor falls outside all allowed roots.
+pub fn validate_path_for_create_dir(path: &str, allowed_roots: &[&Path]) -> Result<PathBuf, FileError> {
+    let target = Path::new(path);
+    if target.as_os_str().is_empty() {
+        return Err(FileError::BadRequest("path is empty".to_string()));
+    }
+
+    let mut ancestor = target;
+    while !ancestor.exists() {
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| FileError::BadRequest(format!("path '{}' has no existing parent directory", path)))?;
+    }
+
+    let canonical_ancestor = std::fs::canonicalize(ancestor)
+        .map_err(|e| FileError::BadRequest(format!("cannot resolve parent of '{}': {}", path, e)))?;
+
+    let is_allowed = allowed_roots.iter().any(|root| match std::fs::canonicalize(root) {
+        Ok(canonical_root) => canonical_ancestor.starts_with(&canonical_root),
+        Err(_) => false,
+    });
+
+    if !is_allowed {
+        return Err(FileError::PathOutsideSandbox {
+            message: format!("path '{}' is outside the allowed sandbox", path),
+            field: Some("path"),
+            operation: Some("create_directory"),
+        });
+    }
+
+    Ok(target.to_path_buf())
+}
+
 /// Check whether a raw path string contains suspicious traversal patterns.
 ///
 /// This is a fast pre-check that catches obvious `..` usage before the
@@ -279,5 +329,42 @@ mod tests {
         let result = validate_path_with_extra_root(file.to_str().unwrap(), &[sandbox.path()], Some(workspace.path()));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), fs::canonicalize(file).unwrap());
+    }
+
+    #[test]
+    fn validate_path_for_create_dir_allows_missing_nested_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        // Neither `.claude` nor `workflows` exists yet — mirrors create_dir_all.
+        let target = dir.path().join(".claude").join("workflows");
+
+        let validated = validate_path_for_create_dir(target.to_str().unwrap(), &[dir.path()]).unwrap();
+        assert_eq!(validated, target);
+    }
+
+    #[test]
+    fn validate_path_for_create_dir_rejects_outside_sandbox() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("evil").join("nested");
+
+        let err = validate_path_for_create_dir(target.to_str().unwrap(), &[sandbox.path()]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FileError::PathOutsideSandbox {
+                    field: Some("path"),
+                    operation: Some("create_directory"),
+                    ..
+                }
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_path_for_create_dir_rejects_empty_path() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let err = validate_path_for_create_dir("", &[sandbox.path()]).unwrap_err();
+        assert!(matches!(err, FileError::BadRequest(_)), "unexpected error: {err}");
     }
 }
