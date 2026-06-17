@@ -144,6 +144,22 @@ impl OutputSink for BackendOutputSink {
             params: None,
         }));
     }
+
+    fn emit_retry(&self, attempt: u32, max_attempts: u32, reason: &str) {
+        // content is a generic, non-sensitive label; the raw reason (which may
+        // contain provider internals) is carried only in params for the UI to
+        // optionally surface, never echoed into the visible content.
+        let _ = self.event_tx.send(AgentStreamEvent::Tips(TipsEventData {
+            content: format!("Retrying ({attempt}/{max_attempts})"),
+            tip_type: TipType::Warning,
+            code: Some("provider.retry".to_string()),
+            params: Some(serde_json::json!({
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "reason": reason,
+            })),
+        }));
+    }
 }
 
 #[cfg(test)]
@@ -288,6 +304,26 @@ mod tests {
             AgentStreamEvent::Tips(data) => {
                 assert_eq!(data.content, "operation completed");
                 assert_eq!(data.tip_type, TipType::Success);
+            }
+            other => panic!("Expected Tips, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn emit_retry_sends_tips_with_provider_retry_code() {
+        let (sink, mut rx) = make_sink();
+        sink.emit_retry(1, 2, "connection reset");
+        let event = rx.try_recv().unwrap();
+        match event {
+            AgentStreamEvent::Tips(data) => {
+                assert_eq!(data.code.as_deref(), Some("provider.retry"));
+                assert_eq!(data.tip_type, TipType::Warning);
+                let params = data.params.expect("retry params present");
+                assert_eq!(params["attempt"], 1);
+                assert_eq!(params["max_attempts"], 2);
+                assert_eq!(params["reason"], "connection reset");
+                // raw provider reason must NOT leak into the visible content
+                assert!(!data.content.contains("connection reset"));
             }
             other => panic!("Expected Tips, got {:?}", other),
         }
