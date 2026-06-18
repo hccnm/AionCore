@@ -508,13 +508,6 @@ mod tests {
         }
     }
 
-    fn aionrs_context(context: AgentSessionContext) -> AionrsSessionBuildContext {
-        match context.kind {
-            AgentSessionKind::Aionrs(aionrs) => *aionrs,
-            other => panic!("expected Aionrs context, got {other:?}"),
-        }
-    }
-
     #[tokio::test]
     async fn acp_agent_id_takes_priority_over_backend() {
         let repos = setup().await;
@@ -634,7 +627,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aionrs_uses_conversation_model_and_ignores_legacy_extra_model() {
+    async fn aionrs_is_archived_before_runtime_context() {
         let repos = setup().await;
         let row = row(
             "aionrs",
@@ -648,18 +641,18 @@ mod tests {
             })),
         );
 
-        let context = repos.builder().build(&row).await.unwrap();
-        assert_eq!(context.model.provider_id, "provider-1");
-        assert_eq!(context.model.model, "gpt-5");
-        assert_eq!(context.model.use_model.as_deref(), Some("gpt-5.1"));
+        let err = repos.builder().build(&row).await.unwrap_err();
+        assert_archived(err, "conv-1");
     }
 
     #[tokio::test]
-    async fn aionrs_context_preserves_agent_skill_snapshot() {
+    async fn acp_context_preserves_agent_skill_snapshot() {
         let repos = setup().await;
+        upsert_builtin(&repos, "builtin-claude-test", "claude").await;
         let row = row(
-            "aionrs",
+            "acp",
             serde_json::json!({
+                "backend": "claude",
                 "skills": ["test-discovery-rules", "code-test-case-generator"]
             }),
             None,
@@ -670,32 +663,31 @@ mod tests {
             context.skills,
             vec!["test-discovery-rules".to_owned(), "code-test-case-generator".to_owned()]
         );
-        let aionrs = aionrs_context(context);
-        assert_eq!(
-            aionrs.config.skills,
-            vec!["test-discovery-rules".to_owned(), "code-test-case-generator".to_owned()]
-        );
+        let acp = acp_context(context);
+        assert_eq!(acp.config.backend.as_deref(), Some("claude"));
     }
 
     #[tokio::test]
     async fn workspace_empty_uses_auto_path_and_is_not_custom() {
         let repos = setup().await;
-        let row = row("aionrs", serde_json::json!({}), None);
+        upsert_builtin(&repos, "builtin-claude-test", "claude").await;
+        let row = row("acp", serde_json::json!({ "backend": "claude" }), None);
 
         let context = repos.builder().build(&row).await.unwrap();
         assert!(!context.workspace.is_custom);
         assert!(context.workspace.stored_path.is_empty());
-        assert!(context.workspace.path.ends_with("aionrs-temp-conv-1"));
+        assert!(context.workspace.path.ends_with("claude-temp-conv-1"));
     }
 
     #[tokio::test]
     async fn workspace_existing_path_is_custom() {
         let repos = setup().await;
+        upsert_builtin(&repos, "builtin-claude-test", "claude").await;
         let custom = repos.workspace_root.join("custom-workspace");
         std::fs::create_dir_all(&custom).unwrap();
         let row = row(
-            "aionrs",
-            serde_json::json!({ "workspace": custom.to_string_lossy().to_string() }),
+            "acp",
+            serde_json::json!({ "backend": "claude", "workspace": custom.to_string_lossy().to_string() }),
             None,
         );
 
@@ -722,6 +714,7 @@ mod tests {
         let repos = setup().await;
 
         for (agent_type, extra) in [
+            ("aionrs", serde_json::json!({})),
             ("gemini", serde_json::json!({})),
             ("codex", serde_json::json!({ "workspace": "/tmp/aionui-codex-history" })),
             (

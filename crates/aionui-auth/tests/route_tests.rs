@@ -368,6 +368,54 @@ async fn t6_4_status_unauthenticated() {
     assert_eq!(json["is_authenticated"], false);
 }
 
+#[tokio::test]
+async fn t6_5_setup_password_initializes_seeded_admin() {
+    let (mut app, _ctx) = test_app().await;
+
+    let req = json_post_anonymous("/api/auth/setup-password", r#"{"new_password":"Initial@Pass1"}"#);
+    let resp = app.clone().oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["success"], true);
+
+    let (_token, user_id) = login(&mut app, "admin", "Initial@Pass1").await;
+    assert_eq!(user_id, "system_default_user");
+}
+
+#[tokio::test]
+async fn t6_6_setup_password_rejects_after_initialization() {
+    let (app, ctx) = test_app().await;
+    create_test_user(&ctx, "admin", "Initial@Pass1").await;
+
+    let req = json_post_anonymous("/api/auth/setup-password", r#"{"new_password":"Second@Pass1"}"#);
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let json = body_json(resp).await;
+    assert_eq!(json["code"], "CONFLICT");
+}
+
+#[tokio::test]
+async fn t6_7_setup_password_rejects_weak_password() {
+    let (app, _ctx) = test_app().await;
+
+    let req = json_post_anonymous("/api/auth/setup-password", r#"{"new_password":"password123"}"#);
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn t6_8_webui_change_password_is_not_a_remote_setup_endpoint() {
+    let (app, _ctx) = test_app().await;
+
+    let req = json_post_anonymous("/api/webui/change-password", r#"{"new_password":"Initial@Pass1"}"#);
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
 // ===========================================================================
 // T7. Current User (GET /api/auth/user)
 // ===========================================================================

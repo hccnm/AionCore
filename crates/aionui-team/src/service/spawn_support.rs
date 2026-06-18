@@ -345,15 +345,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_agent_type_known_backends() {
+    fn parse_agent_type_supported_backends() {
         assert_eq!(parse_agent_type("acp").unwrap(), AgentType::Acp);
         assert_eq!(parse_agent_type("gemini").unwrap(), AgentType::Acp);
-        assert_eq!(parse_agent_type("aionrs").unwrap(), AgentType::Aionrs);
     }
 
     #[test]
     fn parse_agent_type_rejects_deprecated_runtime_types() {
-        for backend in ["nanobot", "remote", "openclaw-gateway"] {
+        for backend in ["aionrs", "nanobot", "remote", "openclaw-gateway"] {
             let err = parse_agent_type(backend).unwrap_err();
             assert!(matches!(err, TeamError::InvalidRequest(_)));
             assert!(

@@ -8,9 +8,9 @@ use axum::routing::{delete, get, post};
 
 use aionui_api_types::{
     ApiResponse, ClientPreferencesResponse, CreateProviderRequest, DetectProtocolRequest, EnsureManagedAcpToolRequest,
-    EnsureManagedAcpToolResponse, EnsureNodeRuntimeRequest, EnsureNodeRuntimeResponse, FetchModelsAnonymousRequest,
-    FetchModelsRequest, FetchModelsResponse, ProtocolDetectionResponse, ProviderResponse, SystemInfoResponse,
-    SystemSettingsResponse, UpdateCheckRequest, UpdateCheckResult, UpdateClientPreferencesRequest,
+    EnsureManagedAcpToolResponse, EnsureNodeRuntimeRequest, EnsureNodeRuntimeResponse, ErrorResponse,
+    FetchModelsAnonymousRequest, FetchModelsRequest, FetchModelsResponse, ProtocolDetectionResponse, ProviderResponse,
+    SystemInfoResponse, SystemSettingsResponse, UpdateCheckRequest, UpdateCheckResult, UpdateClientPreferencesRequest,
     UpdateProviderRequest, UpdateSettingsRequest,
 };
 use aionui_common::ApiError;
@@ -101,14 +101,33 @@ pub fn settings_routes(state: SystemRouterState) -> Router {
 // Settings handlers
 // ===========================================================================
 
-async fn get_settings(
+#[utoipa::path(
+    get,
+    path = "/api/settings",
+    responses(
+        (status = 200, body = ApiResponse<SystemSettingsResponse>)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_settings(
     State(state): State<SystemRouterState>,
 ) -> Result<Json<ApiResponse<SystemSettingsResponse>>, ApiError> {
     let settings = state.settings_service.get_settings().await.map_err(ApiError::from)?;
     Ok(Json(ApiResponse::ok(settings)))
 }
 
-async fn update_settings(
+#[utoipa::path(
+    patch,
+    path = "/api/settings",
+    request_body = UpdateSettingsRequest,
+    responses(
+        (status = 200, body = ApiResponse<SystemSettingsResponse>)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn update_settings(
     State(state): State<SystemRouterState>,
     body: Result<Json<UpdateSettingsRequest>, JsonRejection>,
 ) -> Result<Json<ApiResponse<SystemSettingsResponse>>, ApiError> {
@@ -168,14 +187,34 @@ async fn update_client_preferences(
 // Provider handlers
 // ===========================================================================
 
-async fn list_providers(
+#[utoipa::path(
+    get,
+    path = "/api/providers",
+    responses(
+        (status = 200, body = ApiResponse<Vec<ProviderResponse>>)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn list_providers(
     State(state): State<SystemRouterState>,
 ) -> Result<Json<ApiResponse<Vec<ProviderResponse>>>, ApiError> {
     let providers = state.provider_service.list().await.map_err(ApiError::from)?;
     Ok(Json(ApiResponse::ok(providers)))
 }
 
-async fn create_provider(
+#[utoipa::path(
+    post,
+    path = "/api/providers",
+    request_body = CreateProviderRequest,
+    responses(
+        (status = 201, body = ApiResponse<ProviderResponse>),
+        (status = 400, body = ErrorResponse)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn create_provider(
     State(state): State<SystemRouterState>,
     body: Result<Json<CreateProviderRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ApiResponse<ProviderResponse>>), ApiError> {
@@ -184,7 +223,19 @@ async fn create_provider(
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(provider))))
 }
 
-async fn update_provider(
+#[utoipa::path(
+    put,
+    path = "/api/providers/{id}",
+    params(("id" = String, Path, description = "Provider ID")),
+    request_body = UpdateProviderRequest,
+    responses(
+        (status = 200, body = ApiResponse<ProviderResponse>),
+        (status = 404, body = ErrorResponse)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn update_provider(
     State(state): State<SystemRouterState>,
     Path(id): Path<String>,
     body: Result<Json<UpdateProviderRequest>, JsonRejection>,
@@ -194,7 +245,18 @@ async fn update_provider(
     Ok(Json(ApiResponse::ok(provider)))
 }
 
-async fn delete_provider(
+#[utoipa::path(
+    delete,
+    path = "/api/providers/{id}",
+    params(("id" = String, Path, description = "Provider ID")),
+    responses(
+        (status = 200, description = "Provider deleted"),
+        (status = 404, body = ErrorResponse)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_provider(
     State(state): State<SystemRouterState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<()>>, ApiError> {
@@ -246,7 +308,16 @@ async fn detect_protocol(
 // System info & version check handlers
 // ===========================================================================
 
-async fn get_system_info() -> Json<ApiResponse<SystemInfoResponse>> {
+#[utoipa::path(
+    get,
+    path = "/api/system/info",
+    responses(
+        (status = 200, body = ApiResponse<SystemInfoResponse>)
+    ),
+    tag = "system",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_system_info() -> Json<ApiResponse<SystemInfoResponse>> {
     let info = crate::sysinfo::get_system_info();
     Json(ApiResponse::ok(info))
 }

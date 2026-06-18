@@ -206,7 +206,7 @@ async fn send_to_agent_warms_cold_task_before_returning_stream_subscription() {
     let session = AssistantSessionRow {
         id: "session-1".to_owned(),
         user_id: "channel-user-1".to_owned(),
-        agent_type: "aionrs".to_owned(),
+        agent_type: "acp".to_owned(),
         conversation_id: None,
         workspace: None,
         chat_id: Some("7088048016".to_owned()),

@@ -1412,16 +1412,15 @@ mod tests {
     // -- parse_agent_type tests -----------------------------------------------
 
     #[tokio::test]
-    async fn parse_agent_type_known_types() {
+    async fn parse_agent_type_supported_type_accepts_acp() {
         let registry = hydrated_registry().await;
         assert_eq!(parse_agent_type(&registry, "acp").await.unwrap(), AgentType::Acp);
-        assert_eq!(parse_agent_type(&registry, "aionrs").await.unwrap(), AgentType::Aionrs);
     }
 
     #[tokio::test]
     async fn parse_agent_type_rejects_deprecated_runtime_types() {
         let registry = hydrated_registry().await;
-        for agent_type in ["openclaw-gateway", "nanobot", "remote", "gemini", "codex"] {
+        for agent_type in ["aionrs", "openclaw-gateway", "nanobot", "remote", "gemini", "codex"] {
             let err = parse_agent_type(&registry, agent_type).await.unwrap_err();
             assert!(matches!(err, CronError::InvalidAgentConfig(_)));
             assert!(

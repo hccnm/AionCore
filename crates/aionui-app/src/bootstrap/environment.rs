@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use tracing::info;
 
-use aionui_app::AppConfig;
+use aionui_app::{AppConfig, DeploymentMode};
 use aionui_db::Database;
 
 use crate::cli::Cli;
@@ -36,6 +36,14 @@ pub fn init_environment(cli: &Cli, merged_path: &str) -> Result<ServerEnvironmen
     );
 
     let work_dir = resolve_work_dir(cli.work_dir.clone(), &cli.data_dir);
+    let deployment_mode = DeploymentMode::from_env_or_local(cli.local).map_err(|error| {
+        BootstrapError::new(
+            BootstrapErrorCode::ConfigInvalid,
+            "config.deployment_mode",
+            "invalid startup configuration",
+        )
+        .with_field("deploymentMode", error.value().to_owned())
+    })?;
 
     // SAFETY: called before any service initialization; no concurrent reads.
     unsafe {
@@ -46,20 +54,34 @@ pub fn init_environment(cli: &Cli, merged_path: &str) -> Result<ServerEnvironmen
         host: cli.host.clone(),
         port: cli.port,
         data_dir: cli.data_dir.clone(),
+        config_path: nonempty_env_path("CONFIG_PATH"),
+        public_base_url: nonempty_env("PUBLIC_BASE_URL"),
         work_dir,
         app_version: cli.app_version.clone(),
-        local: cli.local,
+        deployment_mode,
+        local: deployment_mode.is_local(),
     };
     info!(
-        "Running in {} mode — authentication is {}",
-        if config.local { "local" } else { "remote" },
-        if config.local { "disabled" } else { "enabled" }
+        deployment_mode = config.deployment_mode.as_str(),
+        auth = if config.local { "disabled" } else { "enabled" },
+        "startup: deployment mode resolved"
     );
 
     Ok(ServerEnvironment {
         _log_guard: log_guard,
         config,
     })
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn nonempty_env_path(name: &str) -> Option<std::path::PathBuf> {
+    nonempty_env(name).map(std::path::PathBuf::from)
 }
 
 /// Layer 2: Materialize builtin skills + initialize the database.

@@ -47,6 +47,12 @@ pub trait IUserRepository: Send + Sync {
     /// Updates a user's password hash.
     async fn update_password(&self, user_id: &str, password_hash: &str) -> Result<(), DbError>;
 
+    /// Initializes a user's password only if it is currently empty.
+    ///
+    /// Returns `Ok(true)` when the password was written, `Ok(false)` when the
+    /// user exists but has already been initialized.
+    async fn initialize_password_if_empty(&self, user_id: &str, password_hash: &str) -> Result<bool, DbError>;
+
     /// Updates a user's username.
     ///
     /// Returns `DbError::Conflict` if the new username already exists.

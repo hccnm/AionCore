@@ -43,9 +43,46 @@ fn default_state() -> (WsHandlerState, Arc<WebSocketManager>) {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.strip_prefix("Bearer "))
                 .map(|s| s.to_owned())
+                .or_else(|| {
+                    headers
+                        .get("sec-websocket-protocol")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|protocols| {
+                            let first = protocols.split(',').next()?.trim();
+                            if first.is_empty() { None } else { Some(first.to_owned()) }
+                        })
+                })
         }),
     };
     (state, manager)
+}
+
+fn auth_request(addr: SocketAddr, token: &str) -> tungstenite::http::Request<()> {
+    let url = format!("ws://{addr}/ws");
+    tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Host", addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
+        .header("Authorization", format!("Bearer {token}"))
+        .body(())
+        .unwrap()
+}
+
+fn subprotocol_request(addr: SocketAddr, protocol: &str) -> tungstenite::http::Request<()> {
+    let url = format!("ws://{addr}/ws");
+    tungstenite::http::Request::builder()
+        .uri(&url)
+        .header("Host", addr.to_string())
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
+        .header("Sec-WebSocket-Protocol", protocol)
+        .body(())
+        .unwrap()
 }
 
 /// Connect with an Authorization header.
@@ -61,29 +98,29 @@ async fn connect_with_token(
         tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     >,
 ) {
-    let url = format!("ws://{addr}/ws");
-    let request = tungstenite::http::Request::builder()
-        .uri(&url)
-        .header("Host", addr.to_string())
-        .header("Connection", "Upgrade")
-        .header("Upgrade", "websocket")
-        .header("Sec-WebSocket-Version", "13")
-        .header("Sec-WebSocket-Key", tungstenite::handshake::client::generate_key())
-        .header("Authorization", format!("Bearer {token}"))
-        .body(())
+    let (ws, _) = tokio_tungstenite::connect_async(auth_request(addr, token))
+        .await
         .unwrap();
-
-    let (ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     ws.split()
 }
 
-/// Connect without any auth header.
-async fn connect_no_token(
+async fn connect_with_subprotocol_token(
     addr: SocketAddr,
-) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
-    let url = format!("ws://{addr}/ws");
-    let (ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-    ws
+    token: &str,
+) -> (
+    futures_util::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        tungstenite::Message,
+    >,
+    futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    >,
+) {
+    let (ws, response) = tokio_tungstenite::connect_async(subprotocol_request(addr, token))
+        .await
+        .unwrap();
+    assert_eq!(response.headers().get("sec-websocket-protocol").unwrap(), token);
+    ws.split()
 }
 
 /// Read the next text message within a timeout.
@@ -115,7 +152,6 @@ where
     .expect("read timed out")
 }
 
-/// Read until a close frame is received, returning the close code.
 async fn read_close<S>(stream: &mut S) -> Option<u16>
 where
     S: StreamExt<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
@@ -124,12 +160,9 @@ where
     tokio::time::timeout(timeout, async {
         loop {
             match stream.next().await {
-                Some(Ok(tungstenite::Message::Close(frame))) => {
-                    return frame.map(|f| f.code.into());
-                }
+                Some(Ok(tungstenite::Message::Close(frame))) => return frame.map(|f| f.code.into()),
                 Some(Ok(_)) => continue,
-                Some(Err(_)) => return None,
-                None => return None,
+                Some(Err(_)) | None => return None,
             }
         }
     })
@@ -174,31 +207,54 @@ async fn valid_token_connects_successfully() {
 }
 
 #[tokio::test]
-async fn no_token_closes_with_1008() {
-    let (state, _) = default_state();
+async fn valid_subprotocol_token_connects_successfully() {
+    let (state, manager) = default_state();
     let addr = start_server(state).await;
 
-    let mut ws = connect_no_token(addr).await;
+    let (_tx, _rx) = connect_with_subprotocol_token(addr, "valid-token").await;
 
-    let msg = read_text(&mut ws).await;
-    assert_realtime_error(&msg, "REALTIME_AUTH_MISSING", false);
-
-    let code = read_close(&mut ws).await;
-    assert_eq!(code, Some(1008));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(manager.client_count(), 1);
 }
 
 #[tokio::test]
-async fn invalid_token_sends_realtime_auth_expired_then_closes() {
+async fn no_token_sends_auth_missing_then_closes() {
     let (state, _) = default_state();
     let addr = start_server(state).await;
 
-    let (_, mut rx) = connect_with_token(addr, "bad-token").await;
+    let url = format!("ws://{addr}/ws");
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let msg = read_text(&mut ws).await;
+    assert_realtime_error(&msg, "REALTIME_AUTH_MISSING", false);
+    assert_eq!(read_close(&mut ws).await, Some(1008));
+}
 
+#[tokio::test]
+async fn invalid_token_sends_auth_expired_then_closes() {
+    let (state, _) = default_state();
+    let addr = start_server(state).await;
+
+    let (ws, _) = tokio_tungstenite::connect_async(auth_request(addr, "bad-token"))
+        .await
+        .unwrap();
+    let (_tx, mut rx) = ws.split();
     let msg = read_text(&mut rx).await;
     assert_realtime_error(&msg, "REALTIME_AUTH_EXPIRED", false);
+    assert_eq!(read_close(&mut rx).await, Some(1008));
+}
 
-    let code = read_close(&mut rx).await;
-    assert_eq!(code, Some(1008));
+#[tokio::test]
+async fn invalid_bearer_token_shape_sends_auth_expired_then_closes() {
+    let (state, _) = default_state();
+    let addr = start_server(state).await;
+
+    let (ws, _) = tokio_tungstenite::connect_async(auth_request(addr, "Bearer valid-token"))
+        .await
+        .unwrap();
+    let (_tx, mut rx) = ws.split();
+    let msg = read_text(&mut rx).await;
+    assert_realtime_error(&msg, "REALTIME_AUTH_EXPIRED", false);
+    assert_eq!(read_close(&mut rx).await, Some(1008));
 }
 
 #[tokio::test]

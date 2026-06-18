@@ -6,12 +6,12 @@ use std::time::Instant;
 use axum::Json;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Request;
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Router, middleware};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use aionui_ai_agent::{agent_routes, remote_agent_routes};
 use aionui_api_types::ErrorResponse;
@@ -34,6 +34,7 @@ use aionui_shell::shell_routes;
 use aionui_system::{connection_test_routes, system_routes};
 use aionui_team::team_routes;
 
+use crate::config::DeploymentMode;
 use crate::services::AppServices;
 
 use super::health::{guide_mcp_status, health_check};
@@ -230,8 +231,16 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
     let ws_routes = Router::new().route("/ws", get(ws_upgrade_handler)).with_state(ws_state);
     tracing::info!(elapsed_ms = boot.elapsed().as_millis(), "startup: route groups built");
 
+    let openapi_routes = if services.deployment_mode == DeploymentMode::Saas {
+        Router::new()
+    } else {
+        super::openapi::openapi_routes()
+    };
+
     let router = Router::new()
         .route("/health", get(health_check))
+        .route("/healthz", get(health_check))
+        .merge(openapi_routes)
         .merge(auth_routes(auth_state))
         .merge(system_authenticated)
         .merge(conversation_authenticated)
@@ -256,13 +265,13 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
     #[cfg(feature = "weixin")]
     let router = router.merge(weixin_login_authenticated);
 
-    let router = if services.local {
-        router
-    } else {
+    let router = if services.deployment_mode == DeploymentMode::Desktop {
         router.layer(middleware::from_fn_with_state(
             services.cookie_config.clone(),
             csrf_middleware,
         ))
+    } else {
+        router
     }
     .merge(ws_routes)
     .merge(office_proxy)
@@ -281,22 +290,84 @@ pub fn create_router_with_all_state(services: &AppServices, states: ModuleStates
         "startup: route tree build with states completed"
     );
 
-    if services.local {
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::PATCH,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
-            .allow_headers(Any);
-        router.layer(cors)
-    } else {
-        router
+    layer_deployment_cors(router, services.deployment_mode)
+}
+
+fn layer_deployment_cors(router: Router, deployment_mode: DeploymentMode) -> Router {
+    match deployment_mode {
+        DeploymentMode::Local => router.layer(local_cors_layer()),
+        DeploymentMode::Desktop => router,
+        DeploymentMode::Saas => {
+            let origins = allowed_origins_from_env();
+            if origins.is_empty() {
+                tracing::warn!(
+                    code = "CONFIG_ALLOWED_ORIGINS_EMPTY",
+                    stage = "cors.allowed_origins",
+                    "SaaS CORS disabled because ALLOWED_ORIGINS is empty"
+                );
+                router
+            } else {
+                router.layer(saas_cors_layer(origins))
+            }
+        }
     }
+}
+
+fn local_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(cors_methods())
+        .allow_headers(Any)
+}
+
+fn saas_cors_layer(origins: Vec<HeaderValue>) -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods(cors_methods())
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static(aionui_common::constants::CSRF_HEADER_NAME),
+        ])
+        .allow_credentials(true)
+}
+
+fn cors_methods() -> [Method; 6] {
+    [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+    ]
+}
+
+fn allowed_origins_from_env() -> Vec<HeaderValue> {
+    std::env::var("ALLOWED_ORIGINS")
+        .ok()
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|origin| !origin.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter_map(|origin| match HeaderValue::from_str(&origin) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(
+                    code = "CONFIG_INVALID_ALLOWED_ORIGIN",
+                    stage = "cors.allowed_origins",
+                    error = %error,
+                    "skipping invalid allowed origin"
+                );
+                None
+            }
+        })
+        .collect()
 }
 
 async fn normalize_boundary_error_response(request: Request, next: Next) -> Response {

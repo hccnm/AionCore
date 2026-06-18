@@ -4,7 +4,7 @@ use aionui_api_types::WebSocketMessage;
 use axum::extract::WebSocketUpgrade;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use axum::http::HeaderMap;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -33,24 +33,38 @@ pub struct WsHandlerState {
 ///
 /// Extracts a JWT token from the request headers, validates it,
 /// and upgrades the connection to WebSocket on success.
-/// On authentication failure, sends `realtime.error` and closes with 1008.
+/// On authentication failure, rejects the upgrade with HTTP 401.
 ///
 /// When the token is carried via `Sec-WebSocket-Protocol`, the server
-/// echoes the protocol header back so the client handshake succeeds.
+/// echoes only the validated token-shaped protocol value back so the client
+/// handshake succeeds without reflecting arbitrary client input.
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     axum::extract::State(state): axum::extract::State<WsHandlerState>,
-) -> impl IntoResponse {
-    let token = (state.token_extractor)(&headers);
+) -> Response {
+    let Some(token) = (state.token_extractor)(&headers) else {
+        return ws
+            .on_upgrade(move |socket| async move {
+                close_unauthorized(socket, RealtimeError::AuthMissing).await;
+            })
+            .into_response();
+    };
 
-    // Echo Sec-WebSocket-Protocol so clients using it for auth
-    // receive a valid subprotocol negotiation response.
-    let ws = if let Some(protocol) = headers
-        .get("sec-websocket-protocol")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned())
-    {
+    if !is_token_shaped_protocol_value(&token) || !(state.token_validator)(&token) {
+        let ws = if let Some(protocol) = validated_response_protocol(&headers, &token) {
+            ws.protocols([protocol])
+        } else {
+            ws
+        };
+        return ws
+            .on_upgrade(move |socket| async move {
+                close_unauthorized(socket, RealtimeError::AuthExpired).await;
+            })
+            .into_response();
+    }
+
+    let ws = if let Some(protocol) = validated_response_protocol(&headers, &token) {
         ws.protocols([protocol])
     } else {
         ws
@@ -59,19 +73,16 @@ pub async fn ws_upgrade_handler(
     ws.on_upgrade(move |socket| async move {
         handle_socket(socket, token, state).await;
     })
+    .into_response()
 }
 
 /// Post-upgrade connection handler.
 ///
 /// Validates the token, registers the client, spawns send/recv loops.
-async fn handle_socket(socket: WebSocket, token: Option<String>, state: WsHandlerState) {
-    let Some(token) = token else {
-        send_realtime_error_and_close(socket, RealtimeError::AuthMissing, "authentication required").await;
-        return;
-    };
-
+async fn handle_socket(socket: WebSocket, token: String, state: WsHandlerState) {
     if !(state.token_validator)(&token) {
-        send_realtime_error_and_close(socket, RealtimeError::AuthExpired, "authentication failed").await;
+        debug!("websocket token expired after upgrade");
+        close_unauthorized(socket, RealtimeError::AuthExpired).await;
         return;
     }
 
@@ -91,16 +102,47 @@ async fn handle_socket(socket: WebSocket, token: Option<String>, state: WsHandle
     info!(%conn_id, "websocket connection closed");
 }
 
-/// Send a realtime boundary error event, then close with 1008.
-async fn send_realtime_error_and_close(mut socket: WebSocket, error: RealtimeError, reason: &str) {
-    if let Ok(text) = serde_json::to_string(&error.into_event()) {
-        let _ = socket.send(Message::Text(text.into())).await;
+async fn close_unauthorized(mut socket: WebSocket, error: RealtimeError) {
+    let text = serde_json::to_string(&error.into_event()).unwrap_or_else(|_| {
+        r#"{"name":"realtime.error","data":{"code":"REALTIME_INTERNAL_ERROR","message":"Realtime boundary error.","recoverable":false,"details":{}}}"#.to_owned()
+    });
+    let _ = socket.send(Message::Text(text.into())).await;
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code: WebSocketCloseCode::PolicyViolation.as_u16(),
+            reason: error.message().into(),
+        })))
+        .await;
+}
+
+fn validated_response_protocol(headers: &HeaderMap, token: &str) -> Option<String> {
+    let protocol = first_websocket_protocol(headers)?;
+    if protocol == token && is_token_shaped_protocol_value(protocol) {
+        Some(protocol.to_owned())
+    } else {
+        None
     }
-    let close = Message::Close(Some(CloseFrame {
-        code: WebSocketCloseCode::PolicyViolation.as_u16(),
-        reason: reason.into(),
-    }));
-    let _ = socket.send(close).await;
+}
+
+fn first_websocket_protocol(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|protocols| protocols.split(',').next())
+        .map(str::trim)
+        .filter(|protocol| !protocol.is_empty())
+}
+
+fn is_token_shaped_protocol_value(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(is_websocket_subprotocol_tchar)
+}
+
+fn is_websocket_subprotocol_tchar(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
 }
 
 // -------------------------------------------------------------------

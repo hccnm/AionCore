@@ -7,7 +7,7 @@ use aionui_api_types::{
 use aionui_common::{AgentKillReason, ConversationStatus, TimestampMs, generate_prefixed_id, now_ms};
 use aionui_conversation::skill_resolver::SkillResolver;
 use aionui_conversation::{ConversationError, ConversationService};
-use aionui_db::models::MessageRow;
+use aionui_db::models::{ConversationRow, MessageRow};
 use aionui_db::{IConversationRepository, SqliteConversationRepository, init_database_memory};
 use aionui_realtime::EventBroadcaster;
 use serde_json::json;
@@ -533,15 +533,22 @@ async fn t9_6_search_result_includes_conversation_model() {
     let (svc, repo, _b) = setup().await;
     let workspace = ensure_test_workspace_path();
 
-    // Search surfaces conversation.model only for aionrs (the only type that
-    // carries a top-level model under the aionrs-only rule).
-    let aionrs_req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "model": { "provider_id": "p1", "model": "claude-sonnet-4-20250514" },
-        "extra": { "workspace": workspace }
-    }))
-    .unwrap();
-    let conv = svc.create(USER_ID, aionrs_req).await.unwrap();
+    let conv = ConversationRow {
+        id: generate_prefixed_id("conv"),
+        user_id: USER_ID.into(),
+        name: "historical aionrs".into(),
+        r#type: "aionrs".into(),
+        extra: json!({ "workspace": workspace }).to_string(),
+        model: Some(json!({ "provider_id": "p1", "model": "claude-sonnet-4-20250514" }).to_string()),
+        status: Some("pending".into()),
+        source: Some("aionui".into()),
+        channel_chat_id: None,
+        pinned: false,
+        pinned_at: None,
+        created_at: now_ms(),
+        updated_at: now_ms(),
+    };
+    repo.create(&conv).await.unwrap();
 
     repo.insert_message(&make_message(&conv.id, "model test keyword", 0))
         .await

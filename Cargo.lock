@@ -365,6 +365,7 @@ dependencies = [
  "aionui-common",
  "serde",
  "serde_json",
+ "utoipa",
 ]
 
 [[package]]
@@ -416,6 +417,8 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "utoipa",
+ "utoipa-swagger-ui",
  "windows-sys 0.61.2",
  "wiremock",
 ]
@@ -483,6 +486,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "utoipa",
 ]
 
 [[package]]
@@ -554,6 +558,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "utoipa",
 ]
 
 [[package]]
@@ -624,7 +629,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "zip",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -652,7 +657,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "walkdir",
- "zip",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -745,7 +750,7 @@ dependencies = [
  "wait-timeout",
  "walkdir",
  "which 7.0.3",
- "zip",
+ "zip 2.4.2",
  "zstd",
 ]
 
@@ -799,6 +804,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "utoipa",
  "wiremock",
 ]
 
@@ -1562,7 +1568,7 @@ dependencies = [
  "log",
  "quick-xml",
  "serde",
- "zip",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -2364,6 +2370,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -4368,7 +4375,7 @@ version = "0.82.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d61a82de4e7b30fc427909f2c5aafaada88cc7ae8316edabae435f74341f9278"
 dependencies = [
- "zip",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -5752,6 +5759,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
+name = "utoipa"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn",
+]
+
+[[package]]
+name = "utoipa-swagger-ui"
+version = "9.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d047458f1b5b65237c2f6dc6db136945667f40a7668627b3490b9513a3d43a55"
+dependencies = [
+ "axum",
+ "base64",
+ "mime_guess",
+ "regex",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "url",
+ "utoipa",
+ "zip 3.0.0",
+]
+
+[[package]]
 name = "uuid"
 version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6647,6 +6696,26 @@ dependencies = [
  "zopfli",
  "zstd",
 ]
+
+[[package]]
+name = "zip"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12598812502ed0105f607f941c386f43d441e00148fce9dec3ca5ffb0bde9308"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.0",
+ "memchr",
+ "zopfli",
+]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513"
 
 [[package]]
 name = "zmij"

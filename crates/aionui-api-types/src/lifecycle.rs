@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Response for `GET /api/system/info`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct SystemInfoResponse {
     pub cache_dir: String,
     pub work_dir: String,

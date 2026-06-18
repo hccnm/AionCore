@@ -11,7 +11,15 @@ pub(super) struct HealthResponse {
     build_time: &'static str,
 }
 
-pub(super) async fn health_check() -> Json<HealthResponse> {
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy", body = serde_json::Value)
+    ),
+    tag = "health"
+)]
+pub(crate) async fn health_check() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),

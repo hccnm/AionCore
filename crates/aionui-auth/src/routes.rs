@@ -13,9 +13,10 @@ use axum::{Extension, Router};
 use serde::Deserialize;
 
 use aionui_api_types::{
-    ApiResponse, AuthStatusResponse, ChangePasswordRequest, LoginRequest, LoginResponse, PublicUser, QrLoginRequest,
-    RefreshResponse, RefreshTokenRequest, UserInfoResponse, WebuiChangePasswordRequest, WebuiChangeUsernameRequest,
-    WebuiChangeUsernameResponse, WebuiGenerateQrTokenResponse, WebuiResetPasswordResponse, WsTokenResponse,
+    ApiResponse, AuthStatusResponse, ChangePasswordRequest, ErrorResponse, LoginRequest, LoginResponse, PublicUser,
+    QrLoginRequest, RefreshResponse, RefreshTokenRequest, UserInfoResponse, WebuiChangePasswordRequest,
+    WebuiChangeUsernameRequest, WebuiChangeUsernameResponse, WebuiGenerateQrTokenResponse, WebuiResetPasswordResponse,
+    WsTokenResponse,
 };
 use aionui_common::ApiError;
 use aionui_common::constants::COOKIE_MAX_AGE_DAYS;
@@ -109,6 +110,7 @@ fn ensure_local_mode(local: bool) -> Result<(), ApiError> {
 /// - `POST /login`
 /// - `POST /logout`
 /// - `GET /api/auth/status`
+/// - `POST /api/auth/setup-password`
 /// - `GET /api/auth/user`
 /// - `POST /api/auth/change-password`
 /// - `POST /api/auth/refresh`
@@ -121,6 +123,7 @@ fn ensure_local_mode(local: bool) -> Result<(), ApiError> {
 /// - `POST /api/webui/generate-qr-token` (local-only)
 pub fn auth_routes(state: AuthRouterState) -> Router {
     let auth_limiter = Arc::new(RateLimiter::auth());
+    let setup_limiter = Arc::new(RateLimiter::auth());
     let api_limiter = Arc::new(RateLimiter::api());
     let action_limiter = Arc::new(RateLimiter::authenticated_action());
 
@@ -184,6 +187,11 @@ pub fn auth_routes(state: AuthRouterState) -> Router {
         .route_layer(from_fn_with_state(api_limiter.clone(), api_rate_limit_middleware))
         .with_state(state.clone());
 
+    let setup_rate_limited = Router::new()
+        .route("/api/auth/setup-password", post(setup_password_handler))
+        .route_layer(from_fn_with_state(setup_limiter, auth_rate_limit_middleware))
+        .with_state(state.clone());
+
     // Authenticated routes: api limiter -> auth -> action limiter
     // route_layer order: last added = outermost (first to process)
     let authenticated = Router::new()
@@ -214,6 +222,7 @@ pub fn auth_routes(state: AuthRouterState) -> Router {
 
     Router::new()
         .merge(auth_rate_limited)
+        .merge(setup_rate_limited)
         .merge(api_public)
         .merge(authenticated)
         .merge(api_action_limited)
@@ -224,7 +233,17 @@ pub fn auth_routes(state: AuthRouterState) -> Router {
 // POST /login
 // ---------------------------------------------------------------------------
 
-async fn login_handler(
+#[utoipa::path(
+    post,
+    path = "/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = LoginResponse),
+        (status = 401, description = "Invalid credentials", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn login_handler(
     State(state): State<AuthRouterState>,
     body: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
@@ -296,7 +315,16 @@ async fn login_handler(
 // POST /logout
 // ---------------------------------------------------------------------------
 
-async fn logout_handler(State(state): State<AuthRouterState>, headers: HeaderMap) -> Result<Response, ApiError> {
+#[utoipa::path(
+    post,
+    path = "/logout",
+    responses(
+        (status = 200, description = "Logged out"),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn logout_handler(State(state): State<AuthRouterState>, headers: HeaderMap) -> Result<Response, ApiError> {
     if let Some(token) = extract_token_from_headers(&headers) {
         state.jwt_service.blacklist_token(&token);
     }
@@ -311,7 +339,15 @@ async fn logout_handler(State(state): State<AuthRouterState>, headers: HeaderMap
 // GET /api/auth/status
 // ---------------------------------------------------------------------------
 
-async fn status_handler(
+#[utoipa::path(
+    get,
+    path = "/api/auth/status",
+    responses(
+        (status = 200, body = AuthStatusResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn status_handler(
     State(state): State<AuthRouterState>,
     headers: HeaderMap,
 ) -> Result<Json<AuthStatusResponse>, ApiError> {
@@ -338,6 +374,44 @@ async fn status_handler(
         user_count: user_count as u64,
         is_authenticated,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/setup-password
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/setup-password",
+    request_body = WebuiChangePasswordRequest,
+    responses(
+        (status = 200, description = "Initial admin password set"),
+        (status = 400, description = "Invalid password", body = ErrorResponse),
+        (status = 409, description = "System already initialized", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn setup_password_handler(
+    State(state): State<AuthRouterState>,
+    body: Result<Json<WebuiChangePasswordRequest>, JsonRejection>,
+) -> Result<Json<ApiResponse<()>>, ApiError> {
+    let user = resolve_webui_admin(&*state.user_repo).await?;
+    if !user.password_hash.trim().is_empty() {
+        return Err(ApiError::Conflict("System has already been initialized".into()));
+    }
+
+    let Json(req) = body.map_err(ApiError::from)?;
+    let new_hash = hash_validated_password(req.new_password).await?;
+    if !state
+        .user_repo
+        .initialize_password_if_empty(&user.id, &new_hash)
+        .await
+        .map_err(db_error_to_api_error)?
+    {
+        return Err(ApiError::Conflict("System has already been initialized".into()));
+    }
+
+    Ok(Json(ApiResponse::message("Initial password set successfully")))
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +546,17 @@ async fn update_user_last_login_handler(
 // GET /api/auth/user
 // ---------------------------------------------------------------------------
 
-async fn user_handler(Extension(user): Extension<CurrentUser>) -> Json<UserInfoResponse> {
+#[utoipa::path(
+    get,
+    path = "/api/auth/user",
+    responses(
+        (status = 200, body = UserInfoResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn user_handler(Extension(user): Extension<CurrentUser>) -> Json<UserInfoResponse> {
     Json(UserInfoResponse {
         success: true,
         user: PublicUser {
@@ -486,7 +570,18 @@ async fn user_handler(Extension(user): Extension<CurrentUser>) -> Json<UserInfoR
 // POST /api/auth/change-password
 // ---------------------------------------------------------------------------
 
-async fn change_password_handler(
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-password",
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed"),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn change_password_handler(
     State(state): State<AuthRouterState>,
     Extension(current_user): Extension<CurrentUser>,
     body: Result<Json<ChangePasswordRequest>, JsonRejection>,
@@ -543,7 +638,17 @@ async fn change_password_handler(
 // POST /api/auth/refresh
 // ---------------------------------------------------------------------------
 
-async fn refresh_handler(
+#[utoipa::path(
+    post,
+    path = "/api/auth/refresh",
+    request_body = RefreshTokenRequest,
+    responses(
+        (status = 200, body = RefreshResponse),
+        (status = 401, description = "Invalid token", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
+pub async fn refresh_handler(
     State(state): State<AuthRouterState>,
     body: Result<Json<RefreshTokenRequest>, JsonRejection>,
 ) -> Result<Json<RefreshResponse>, ApiError> {
@@ -569,7 +674,17 @@ async fn refresh_handler(
 // GET /api/ws-token
 // ---------------------------------------------------------------------------
 
-async fn ws_token_handler(
+#[utoipa::path(
+    get,
+    path = "/api/ws-token",
+    responses(
+        (status = 200, body = WsTokenResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn ws_token_handler(
     State(state): State<AuthRouterState>,
     Extension(current_user): Extension<CurrentUser>,
     headers: HeaderMap,
@@ -718,6 +833,30 @@ async fn resolve_webui_admin(user_repo: &dyn IUserRepository) -> Result<User, Ap
         .ok_or_else(|| ApiError::NotFound("No WebUI admin user configured".into()))
 }
 
+async fn update_webui_admin_password(
+    user_repo: &dyn IUserRepository,
+    user_id: &str,
+    new_password: String,
+) -> Result<(), ApiError> {
+    let new_hash = hash_validated_password(new_password).await?;
+
+    user_repo
+        .update_password(user_id, &new_hash)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?;
+
+    Ok(())
+}
+
+async fn hash_validated_password(new_password: String) -> Result<String, ApiError> {
+    validate_password(&new_password)?;
+
+    tokio::task::spawn_blocking(move || hash_password(&new_password))
+        .await
+        .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?
+        .map_err(ApiError::from)
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/webui/change-password
 // ---------------------------------------------------------------------------
@@ -727,22 +866,10 @@ async fn webui_change_password_handler(
     body: Result<Json<WebuiChangePasswordRequest>, JsonRejection>,
 ) -> Result<Json<ApiResponse<()>>, ApiError> {
     ensure_local_mode(state.local)?;
+    let user = resolve_webui_admin(&*state.user_repo).await?;
     let Json(req) = body.map_err(ApiError::from)?;
 
-    validate_password(&req.new_password)?;
-
-    let user = resolve_webui_admin(&*state.user_repo).await?;
-
-    let password = req.new_password;
-    let new_hash = tokio::task::spawn_blocking(move || hash_password(&password))
-        .await
-        .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))??;
-
-    state
-        .user_repo
-        .update_password(&user.id, &new_hash)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?;
+    update_webui_admin_password(&*state.user_repo, &user.id, req.new_password).await?;
 
     Ok(Json(ApiResponse::message("Password changed successfully")))
 }

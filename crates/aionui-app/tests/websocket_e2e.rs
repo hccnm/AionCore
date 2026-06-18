@@ -256,14 +256,17 @@ async fn t1_3_invalid_token_sends_auth_expired_then_closes() {
 }
 
 #[tokio::test]
-async fn t1_4_token_from_cookie() {
+async fn t1_4_cookie_token_is_not_accepted() {
     let app = start_app().await;
     let token = sign_token(&app, "user1");
 
-    let (_tx, _rx) = connect_cookie(app.addr, &token).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_tx, mut rx) = connect_cookie(app.addr, &token).await;
+    let msg = read_text(&mut rx).await;
+    assert_realtime_error(&msg, "REALTIME_AUTH_MISSING", false);
 
-    assert_eq!(ws_manager(&app).client_count(), 1);
+    let code = read_close(&mut rx).await;
+    assert_eq!(code, Some(1008));
+    assert_eq!(ws_manager(&app).client_count(), 0);
 }
 
 #[tokio::test]

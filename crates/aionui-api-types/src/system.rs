@@ -7,7 +7,7 @@ use serde_json::Value;
 ///
 /// Returns all backend system settings with their current values.
 /// When no settings exist in the database, the service layer returns defaults.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct SystemSettingsResponse {
     pub language: String,
     pub notification_enabled: bool,
@@ -32,7 +32,7 @@ impl Default for SystemSettingsResponse {
 ///
 /// All fields are optional — only the fields present in the request body
 /// are updated. Unknown fields are silently ignored by serde.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
     pub language: Option<String>,
     pub notification_enabled: Option<bool>,

@@ -158,6 +158,27 @@ impl IUserRepository for SqliteUserRepository {
         Ok(())
     }
 
+    async fn initialize_password_if_empty(&self, user_id: &str, password_hash: &str) -> Result<bool, DbError> {
+        let now = aionui_common::now_ms();
+        let result =
+            sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ''")
+                .bind(password_hash)
+                .bind(now)
+                .bind(user_id)
+                .execute(&self.pool)
+                .await?;
+
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+
+        if self.find_by_id(user_id).await?.is_none() {
+            return Err(DbError::NotFound(format!("User '{user_id}' not found")));
+        }
+
+        Ok(false)
+    }
+
     async fn update_username(&self, user_id: &str, username: &str) -> Result<(), DbError> {
         let now = aionui_common::now_ms();
         let result = sqlx::query("UPDATE users SET username = ?, updated_at = ? WHERE id = ?")

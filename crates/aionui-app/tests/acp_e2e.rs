@@ -26,7 +26,7 @@ async fn list_agents_returns_array() {
     assert_eq!(body["success"], true);
     assert!(body["data"].is_array());
     let agents = body["data"].as_array().unwrap();
-    assert!(agents.iter().any(|a| a["agent_type"] == "aionrs"));
+    assert!(!agents.iter().any(|a| a["agent_type"] == "aionrs"));
 }
 
 #[tokio::test]
@@ -41,6 +41,8 @@ async fn refresh_agents_returns_array() {
     let body = body_json(resp).await;
     assert_eq!(body["success"], true);
     assert!(body["data"].is_array());
+    let agents = body["data"].as_array().unwrap();
+    assert!(!agents.iter().any(|a| a["agent_type"] == "aionrs"));
 }
 
 #[tokio::test]

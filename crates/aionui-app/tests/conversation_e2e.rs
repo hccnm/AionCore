@@ -56,20 +56,17 @@ async fn t1_2_create_supported_agent_types_and_reject_legacy_types() {
     let (mut app, services) = build_app().await;
     let (token, csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 
-    let types = ["acp", "aionrs"];
-    for agent_type in types {
-        let body = json!({
-            "type": agent_type,
-            "extra": {}
-        });
-        let req = json_with_token("POST", "/api/conversations", body, &token, &csrf);
-        let resp = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED, "type={agent_type}");
-        let json = body_json(resp).await;
-        assert_eq!(json["data"]["type"], agent_type);
-    }
+    let body = json!({
+        "type": "acp",
+        "extra": {}
+    });
+    let req = json_with_token("POST", "/api/conversations", body, &token, &csrf);
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp).await;
+    assert_eq!(json["data"]["type"], "acp");
 
-    for agent_type in ["openclaw-gateway", "nanobot", "remote", "gemini"] {
+    for agent_type in ["aionrs", "openclaw-gateway", "nanobot", "remote", "gemini"] {
         let body = json!({
             "type": agent_type,
             "extra": {}
@@ -537,11 +534,10 @@ async fn t4_3_update_extra_merge() {
 }
 
 #[tokio::test]
-async fn t4_4_update_model() {
+async fn t4_4_create_aionrs_conversation_rejected() {
     let (mut app, services) = build_app().await;
     let (token, csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 
-    // aionrs — only type that allows top-level model updates
     let create = json!({
         "type": "aionrs",
         "name": "Model Test",
@@ -549,21 +545,11 @@ async fn t4_4_update_model() {
         "extra": {}
     });
     let req = json_with_token("POST", "/api/conversations", create, &token, &csrf);
-    let resp = app.clone().oneshot(req).await.unwrap();
-    let json = body_json(resp).await;
-    let id = json["data"]["id"].as_str().unwrap().to_owned();
-
-    let req = json_with_token(
-        "PATCH",
-        &format!("/api/conversations/{id}"),
-        json!({"model": {"provider_id": "p2", "model": "new-model"}}),
-        &token,
-        &csrf,
-    );
     let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["data"]["model"]["provider_id"], "p2");
-    assert_eq!(json["data"]["model"]["model"], "new-model");
+    assert_eq!(json["code"], "BAD_REQUEST");
 }
 
 #[tokio::test]

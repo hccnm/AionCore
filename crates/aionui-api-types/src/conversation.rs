@@ -26,13 +26,17 @@ pub struct ConversationMcpStatus {
 // ── Request types ──────────────────────────────────────────────────
 
 /// Body for `POST /api/conversations`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateConversationRequest {
+    #[schema(value_type = String)]
     pub r#type: AgentType,
     pub name: Option<String>,
+    #[schema(value_type = Option<Object>)]
     pub model: Option<ProviderWithModel>,
+    #[schema(value_type = Option<String>)]
     pub source: Option<ConversationSource>,
     pub channel_chat_id: Option<String>,
+    #[schema(value_type = Object)]
     pub extra: serde_json::Value,
 }
 
@@ -40,11 +44,13 @@ pub struct CreateConversationRequest {
 ///
 /// All fields optional — only supplied fields are applied.
 /// `extra` uses merge semantics (patch, not replace).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateConversationRequest {
     pub name: Option<String>,
     pub pinned: Option<bool>,
+    #[schema(value_type = Option<Object>)]
     pub model: Option<ProviderWithModel>,
+    #[schema(value_type = Option<Object>)]
     pub extra: Option<serde_json::Value>,
 }
 
@@ -61,7 +67,7 @@ pub struct CloneConversationRequest {
 /// Body for `POST /api/conversations/:id/messages`.
 ///
 /// `msg_id` is server-generated — clients must not provide one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SendMessageRequest {
     pub content: String,
     #[serde(default)]
@@ -73,7 +79,7 @@ pub struct SendMessageRequest {
 }
 
 /// Response for `POST /api/conversations/:id/messages`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SendMessageResponse {
     pub msg_id: String,
     pub turn_id: String,
@@ -81,7 +87,7 @@ pub struct SendMessageResponse {
 }
 
 /// Body for `POST /api/conversations/:id/cancel`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct CancelConversationRequest {
     pub turn_id: String,
 }
@@ -108,7 +114,7 @@ pub struct AcpExtResponse {
     pub result: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationRuntimeStateKind {
     Idle,
@@ -117,11 +123,12 @@ pub enum ConversationRuntimeStateKind {
     WaitingConfirmation,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub struct ConversationRuntimeSummary {
     pub state: ConversationRuntimeStateKind,
     pub can_send_message: bool,
     pub has_task: bool,
+    #[schema(value_type = Option<String>)]
     pub task_status: Option<ConversationStatus>,
     pub is_processing: bool,
     pub pending_confirmations: usize,
@@ -131,7 +138,7 @@ pub struct ConversationRuntimeSummary {
 // ── Query types ────────────────────────────────────────────────────
 
 /// Query parameters for `GET /api/conversations`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 pub struct ListConversationsQuery {
     pub cursor: Option<String>,
     pub limit: Option<u32>,
@@ -141,7 +148,7 @@ pub struct ListConversationsQuery {
 }
 
 /// Query parameters for `GET /api/conversations/:id/messages`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 pub struct ListMessagesQuery {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
@@ -156,7 +163,7 @@ pub struct UpdateConversationArtifactRequest {
 }
 
 /// Query parameters for `GET /api/messages/search`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SearchMessagesQuery {
     pub keyword: String,
     pub page: Option<u32>,
@@ -177,25 +184,33 @@ pub struct SearchMessagesQuery {
 /// serialized JSON omits the key entirely when the value is absent. This
 /// keeps the wire shape tight and matches what the frontend mapper already
 /// tolerates (`'model' in r` guard handles missing keys).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConversationResponse {
     pub id: String,
     pub name: String,
+    #[schema(value_type = String)]
     pub r#type: AgentType,
+    #[schema(value_type = Option<Object>)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ProviderWithModel>,
+    #[schema(value_type = String)]
     pub status: ConversationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ConversationRuntimeSummary>,
+    #[schema(value_type = Option<String>)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<ConversationSource>,
     pub pinned: bool,
+    #[schema(value_type = Option<i64>)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_chat_id: Option<String>,
+    #[schema(value_type = i64)]
     pub created_at: TimestampMs,
+    #[schema(value_type = i64)]
     pub modified_at: TimestampMs,
+    #[schema(value_type = Object)]
     pub extra: serde_json::Value,
 }
 
@@ -203,16 +218,21 @@ pub struct ConversationResponse {
 pub type ConversationListResponse = PaginatedResult<ConversationResponse>;
 
 /// Single message object returned in API responses.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MessageResponse {
     pub id: String,
     pub conversation_id: String,
     pub msg_id: Option<String>,
+    #[schema(value_type = String)]
     pub r#type: MessageType,
+    #[schema(value_type = Object)]
     pub content: serde_json::Value,
+    #[schema(value_type = Option<String>)]
     pub position: Option<MessagePosition>,
+    #[schema(value_type = Option<String>)]
     pub status: Option<MessageStatus>,
     pub hidden: bool,
+    #[schema(value_type = i64)]
     pub created_at: TimestampMs,
 }
 
@@ -220,7 +240,7 @@ pub struct MessageResponse {
 pub type MessageListResponse = PaginatedResult<MessageResponse>;
 
 /// Response for `GET /api/conversations/active-count`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActiveCountResponse {
     pub count: usize,
 }

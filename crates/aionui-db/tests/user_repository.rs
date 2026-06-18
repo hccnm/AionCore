@@ -180,6 +180,19 @@ async fn t2_10_update_password_changes_hash_and_updated_at() {
     assert!(updated.updated_at >= user.updated_at);
 }
 
+#[tokio::test]
+async fn t2_10_initialize_password_if_empty_only_writes_once() {
+    let r = repo().await;
+    let user = r.get_system_user().await.unwrap().unwrap();
+    assert!(user.password_hash.is_empty());
+
+    assert!(r.initialize_password_if_empty(&user.id, "first_hash").await.unwrap());
+    assert!(!r.initialize_password_if_empty(&user.id, "second_hash").await.unwrap());
+
+    let updated = r.find_by_id(&user.id).await.unwrap().unwrap();
+    assert_eq!(updated.password_hash, "first_hash");
+}
+
 // -- T2.11 Update username --
 
 #[tokio::test]

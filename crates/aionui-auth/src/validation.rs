@@ -13,6 +13,7 @@ const WEAK_PASSWORDS: &[&str] = &["password", "12345678", "123456789", "qwertyui
 /// Rules:
 /// - Length: 8-128 characters
 /// - Not in the weak password blacklist (case-insensitive)
+/// - Contains at least three of: lowercase, uppercase, digit, special character
 pub fn validate_password(password: &str) -> Result<(), AuthError> {
     if password.len() < MIN_PASSWORD_LENGTH {
         return Err(AuthError::WeakPassword(format!(
@@ -27,6 +28,22 @@ pub fn validate_password(password: &str) -> Result<(), AuthError> {
     let lower = password.to_lowercase();
     if WEAK_PASSWORDS.contains(&lower.as_str()) {
         return Err(AuthError::WeakPassword("Password is too common".into()));
+    }
+    let classes = [
+        password.bytes().any(|b| b.is_ascii_lowercase()),
+        password.bytes().any(|b| b.is_ascii_uppercase()),
+        password.bytes().any(|b| b.is_ascii_digit()),
+        password
+            .bytes()
+            .any(|b| b.is_ascii_punctuation() || b.is_ascii_whitespace()),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if classes < 3 {
+        return Err(AuthError::WeakPassword(
+            "Password must include at least three of lowercase, uppercase, digit, and special characters".into(),
+        ));
     }
     Ok(())
 }
@@ -85,7 +102,7 @@ mod tests {
 
     #[test]
     fn password_exactly_max_length() {
-        let max = "a".repeat(128);
+        let max = format!("{}A1!", "a".repeat(125));
         assert!(validate_password(&max).is_ok());
     }
 

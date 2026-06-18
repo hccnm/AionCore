@@ -10,7 +10,7 @@ pub mod middleware;
 mod password;
 pub mod qr_token;
 mod rate_limit;
-mod routes;
+pub mod routes;
 mod security;
 mod validation;
 

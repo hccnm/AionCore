@@ -36,7 +36,7 @@ pub struct AuthState {
 /// Authentication middleware that verifies JWT tokens and injects `CurrentUser`.
 ///
 /// Flow:
-/// 1. Extract bearer token from `Authorization` header or `aionui-session` cookie
+/// 1. Extract bearer token from the `Authorization` header
 /// 2. Verify JWT signature, expiration, and blacklist
 /// 3. Look up user in the database to ensure they still exist
 /// 4. Insert [`CurrentUser`] into request extensions

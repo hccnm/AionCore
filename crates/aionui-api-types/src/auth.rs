@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 /// Public user info returned in API responses.
 ///
 /// Contains only the fields safe to expose to clients.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct PublicUser {
     pub id: String,
     pub username: String,
 }
 
 /// Login request body for `POST /login`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
 /// Login success response for `POST /login` and `POST /api/auth/qr-login`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub success: bool,
     pub message: String,
@@ -37,7 +37,7 @@ impl LoginResponse {
 }
 
 /// Change password request body for `POST /api/auth/change-password`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
@@ -50,7 +50,7 @@ pub struct QrLoginRequest {
 }
 
 /// Auth status response for `GET /api/auth/status`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuthStatusResponse {
     pub success: bool,
     pub needs_setup: bool,
@@ -59,27 +59,27 @@ pub struct AuthStatusResponse {
 }
 
 /// Refresh token request body for `POST /api/auth/refresh`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RefreshTokenRequest {
     pub token: String,
 }
 
 /// User info response for `GET /api/auth/user`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserInfoResponse {
     pub success: bool,
     pub user: PublicUser,
 }
 
 /// Refresh token response for `POST /api/auth/refresh`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
     pub success: bool,
     pub token: String,
 }
 
 /// WebSocket token response for `GET /api/ws-token`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct WsTokenResponse {
     pub success: bool,
     pub ws_token: String,
@@ -90,11 +90,11 @@ pub struct WsTokenResponse {
 // WebUI admin credential endpoints (local-only)
 // ---------------------------------------------------------------------------
 
-/// Change password request body for `POST /api/webui/change-password`.
+/// Set the initial admin password or update the trusted local WebUI password.
 ///
-/// No current_password field — this endpoint is local-mode only and assumes
-/// the caller is the trusted Electron main process.
-#[derive(Debug, Deserialize)]
+/// No current_password field. In SaaS mode this shape is only accepted by
+/// `POST /api/auth/setup-password` while the seeded admin password is empty.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct WebuiChangePasswordRequest {
     pub new_password: String,
 }

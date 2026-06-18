@@ -437,14 +437,13 @@ mod tests {
     // ── parse_agent_type ───────────────────────────────────────────────
 
     #[test]
-    fn parse_known_agent_types() {
+    fn parse_supported_agent_type_accepts_acp() {
         assert_eq!(parse_agent_type("acp").unwrap(), AgentType::Acp);
-        assert_eq!(parse_agent_type("aionrs").unwrap(), AgentType::Aionrs);
     }
 
     #[test]
     fn parse_agent_type_rejects_deprecated_channel_runtime_types() {
-        for raw in ["openclaw-gateway", "nanobot", "remote", "gemini"] {
+        for raw in ["aionrs", "openclaw-gateway", "nanobot", "remote", "gemini"] {
             let err = parse_agent_type(raw).unwrap_err();
             assert!(matches!(err, ChannelError::InvalidConfig(_)));
         }

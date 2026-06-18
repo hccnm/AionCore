@@ -274,17 +274,14 @@ async fn t13_1_authorization_header_takes_priority() {
 }
 
 #[tokio::test]
-async fn t13_2_cookie_fallback() {
+async fn t13_2_cookie_is_not_an_auth_fallback() {
     let (mut app, services) = build_app().await;
     let (token, _csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 
-    // Only cookie, no Authorization header
     let req = get_with_cookie("/api/auth/user", &token);
     let resp = app.oneshot(req).await.unwrap();
 
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp).await;
-    assert_eq!(json["user"]["username"], "admin");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

@@ -19,7 +19,7 @@ use aionui_db::{
 use aionui_realtime::{BroadcastEventBus, WebSocketManager};
 use aionui_team::GuideMcpServer;
 
-use crate::config::{AppConfig, derive_encryption_key};
+use crate::config::{AppConfig, DeploymentMode, derive_encryption_key};
 
 pub struct AppServices {
     pub database: Database,
@@ -42,7 +42,10 @@ pub struct AppServices {
     /// Raw JWT secret string, used to derive encryption keys.
     pub jwt_secret_raw: String,
     pub data_dir: PathBuf,
+    pub config_path: Option<PathBuf>,
+    pub public_base_url: Option<String>,
     pub work_dir: PathBuf,
+    pub deployment_mode: DeploymentMode,
     /// When `true`, skip JWT authentication and use a fixed default user.
     pub local: bool,
     pub app_version: String,
@@ -76,8 +79,11 @@ impl AppServices {
 
     pub async fn from_config(database: Database, config: &AppConfig) -> anyhow::Result<Self> {
         let data_dir = config.data_dir.clone();
+        let config_path = config.config_path.clone();
+        let public_base_url = config.public_base_url.clone();
         let work_dir = config.work_dir.clone();
-        let local = config.local;
+        let deployment_mode = config.effective_deployment_mode();
+        let local = deployment_mode.is_local();
         let app_version = config.app_version.clone();
         let user_repo: Arc<dyn IUserRepository> = Arc::new(SqliteUserRepository::new(database.pool().clone()));
 
@@ -204,7 +210,10 @@ impl AppServices {
             acp_session_sync: acp_agent_service,
             jwt_secret_raw: secret,
             data_dir,
+            config_path,
+            public_base_url,
             work_dir,
+            deployment_mode,
             local,
             app_version,
             skill_paths,

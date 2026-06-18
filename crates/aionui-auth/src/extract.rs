@@ -1,7 +1,5 @@
 use axum::http::{HeaderMap, Request, header};
 
-use aionui_common::constants::COOKIE_NAME;
-
 /// Extract the client IP address from request headers.
 ///
 /// Priority: `X-Forwarded-For` (first IP) > `X-Real-IP` > `"unknown"`.
@@ -33,24 +31,15 @@ pub fn extract_client_ip_from_headers(headers: &HeaderMap) -> String {
 }
 
 /// Extract bearer token from HTTP request headers.
-///
-/// Priority: `Authorization: Bearer <token>` > `aionui-session` cookie.
 pub fn extract_token_from_headers(headers: &HeaderMap) -> Option<String> {
-    if let Some(token) = extract_bearer_token(headers) {
-        return Some(token);
-    }
-    extract_cookie_value(headers, COOKIE_NAME)
+    extract_bearer_token(headers)
 }
 
 /// Extract bearer token from WebSocket upgrade request headers.
 ///
-/// Priority: `Authorization` > `Cookie` > `Sec-WebSocket-Protocol` (first value).
+/// Priority: `Authorization` > `Sec-WebSocket-Protocol` (first value).
 pub fn extract_token_from_ws_headers(headers: &HeaderMap) -> Option<String> {
     if let Some(token) = extract_bearer_token(headers) {
-        return Some(token);
-    }
-
-    if let Some(token) = extract_cookie_value(headers, COOKIE_NAME) {
         return Some(token);
     }
 
@@ -139,13 +128,13 @@ mod tests {
     }
 
     #[test]
-    fn token_from_cookie() {
+    fn token_not_extracted_from_cookie() {
         let headers = headers_with(&[("cookie", "aionui-session=cookie_token; other=val")]);
-        assert_eq!(extract_token_from_headers(&headers), Some("cookie_token".into()));
+        assert_eq!(extract_token_from_headers(&headers), None);
     }
 
     #[test]
-    fn token_header_takes_priority_over_cookie() {
+    fn token_from_authorization_ignores_cookie() {
         let headers = headers_with(&[
             ("authorization", "Bearer header_token"),
             ("cookie", "aionui-session=cookie_token"),
@@ -180,9 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn ws_token_from_cookie() {
+    fn ws_token_not_extracted_from_cookie() {
         let headers = headers_with(&[("cookie", "aionui-session=ws_cookie")]);
-        assert_eq!(extract_token_from_ws_headers(&headers), Some("ws_cookie".into()));
+        assert_eq!(extract_token_from_ws_headers(&headers), None);
     }
 
     #[test]
@@ -202,13 +191,12 @@ mod tests {
     }
 
     #[test]
-    fn ws_token_fallback_through_sources() {
-        // Only cookie and protocol, no authorization
+    fn ws_token_falls_back_to_protocol_not_cookie() {
         let headers = headers_with(&[
             ("cookie", "aionui-session=cookie_token"),
             ("sec-websocket-protocol", "proto_token"),
         ]);
-        assert_eq!(extract_token_from_ws_headers(&headers), Some("cookie_token".into()));
+        assert_eq!(extract_token_from_ws_headers(&headers), Some("proto_token".into()));
     }
 
     // --- extract_cookie_value ---
@@ -253,9 +241,7 @@ mod tests {
 
     #[test]
     fn token_from_cookie_with_malformed_entries() {
-        // End-to-end: extract_token_from_headers should still find the
-        // session cookie even when other entries lack '='
         let headers = headers_with(&[("cookie", "garbage; aionui-session=abc; nope")]);
-        assert_eq!(extract_token_from_headers(&headers), Some("abc".into()));
+        assert_eq!(extract_token_from_headers(&headers), None);
     }
 }

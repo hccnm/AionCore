@@ -4,11 +4,12 @@ mod commands;
 mod error;
 mod process_report;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use aionui_app::AppServices;
+use aionui_app::{AppServices, DeploymentMode};
 use cli::{Cli, Command};
 
 use crate::bootstrap::parent_exit_signal;
@@ -27,7 +28,8 @@ fn main() -> ExitCode {
 }
 
 fn run_main() -> Result<ExitCode, MainError> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    apply_env_overrides(&mut cli)?;
 
     // mcp-* subcommands route into short-lived stdio helpers that live entirely
     // outside the main HTTP server. They share the global flags so clap can
@@ -54,6 +56,56 @@ fn run_main() -> Result<ExitCode, MainError> {
         .build()
         .map_err(|error| runtime_init_error_for_command(&cli.command, error))?;
     runtime.block_on(async_main(merged_path, cli))
+}
+
+fn apply_env_overrides(cli: &mut Cli) -> Result<(), MainError> {
+    if let Some(data_dir) = nonempty_env("DATA_DIR") {
+        cli.data_dir = PathBuf::from(data_dir);
+    }
+
+    let listen_addr_from_env = nonempty_env("LISTEN_ADDR");
+    if let Some(host) = &listen_addr_from_env {
+        cli.host = host.clone();
+    }
+
+    if let Some(port) = nonempty_env("LISTEN_PORT") {
+        cli.port = port.parse::<u16>().map_err(|_| {
+            MainError::Bootstrap(
+                bootstrap::BootstrapError::new(
+                    bootstrap::BootstrapErrorCode::ConfigInvalid,
+                    "config.listen_port",
+                    "invalid startup configuration",
+                )
+                .with_field("listenPort", port),
+            )
+        })?;
+    }
+
+    let deployment_mode = DeploymentMode::from_env_or_local(cli.local).map_err(|error| {
+        MainError::Bootstrap(
+            bootstrap::BootstrapError::new(
+                bootstrap::BootstrapErrorCode::ConfigInvalid,
+                "config.deployment_mode",
+                "invalid startup configuration",
+            )
+            .with_field("deploymentMode", error.value().to_owned()),
+        )
+    })?;
+
+    cli.local = deployment_mode.is_local();
+    if deployment_mode.is_saas() && listen_addr_from_env.is_none() && cli.host == aionui_common::constants::DEFAULT_HOST
+    {
+        cli.host = "0.0.0.0".to_owned();
+    }
+
+    Ok(())
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn runtime_init_error_for_command(command: &Option<Command>, error: std::io::Error) -> MainError {

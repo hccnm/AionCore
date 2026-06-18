@@ -1,6 +1,7 @@
 //! HTTP router assembly for the application.
 
 mod health;
+mod openapi;
 mod routes;
 mod state;
 mod trace;

@@ -10,8 +10,8 @@ use aionui_api_types::{
     ActiveCountResponse, ApiResponse, ApprovalCheckQuery, ApprovalCheckResponse, CancelConversationRequest,
     CancelConversationResponse, CloneConversationRequest, ConfirmRequest, ConfirmationListResponse,
     ConversationArtifactListResponse, ConversationArtifactResponse, ConversationListResponse, ConversationResponse,
-    CreateConversationRequest, ListConversationsQuery, ListMessagesQuery, MessageListResponse, MessageResponse,
-    MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
+    CreateConversationRequest, ErrorResponse, ListConversationsQuery, ListMessagesQuery, MessageListResponse,
+    MessageResponse, MessageSearchResponse, SearchMessagesQuery, SendMessageRequest, SendMessageResponse,
     UpdateConversationArtifactRequest, UpdateConversationRequest,
 };
 use aionui_auth::CurrentUser;
@@ -76,7 +76,18 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
 
 // ── Handlers ───────────────────────────────────────────────────────
 
-async fn create(
+#[utoipa::path(
+    post,
+    path = "/api/conversations",
+    request_body = CreateConversationRequest,
+    responses(
+        (status = 201, body = ApiResponse<ConversationResponse>),
+        (status = 400, body = ErrorResponse)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn create(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     body: Result<Json<CreateConversationRequest>, JsonRejection>,
@@ -86,7 +97,16 @@ async fn create(
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(conversation))))
 }
 
-async fn list(
+#[utoipa::path(
+    get,
+    path = "/api/conversations",
+    responses(
+        (status = 200, body = serde_json::Value)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn list(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Query(query): Query<ListConversationsQuery>,
@@ -109,7 +129,18 @@ async fn clone(
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(conversation))))
 }
 
-async fn get_one(
+#[utoipa::path(
+    get,
+    path = "/api/conversations/{id}",
+    params(("id" = String, Path, description = "Conversation ID")),
+    responses(
+        (status = 200, body = ApiResponse<ConversationResponse>),
+        (status = 404, body = ErrorResponse)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_one(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -118,7 +149,19 @@ async fn get_one(
     Ok(Json(ApiResponse::ok(conversation)))
 }
 
-async fn update(
+#[utoipa::path(
+    patch,
+    path = "/api/conversations/{id}",
+    params(("id" = String, Path, description = "Conversation ID")),
+    request_body = UpdateConversationRequest,
+    responses(
+        (status = 200, body = ApiResponse<ConversationResponse>),
+        (status = 404, body = ErrorResponse)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn update(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -133,7 +176,18 @@ async fn update(
     Ok(Json(ApiResponse::ok(conversation)))
 }
 
-async fn delete_one(
+#[utoipa::path(
+    delete,
+    path = "/api/conversations/{id}",
+    params(("id" = String, Path, description = "Conversation ID")),
+    responses(
+        (status = 200, description = "Conversation deleted"),
+        (status = 404, body = ErrorResponse)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_one(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -164,7 +218,17 @@ async fn associated(
     Ok(Json(ApiResponse::ok(items)))
 }
 
-async fn list_msg(
+#[utoipa::path(
+    get,
+    path = "/api/conversations/{id}/messages",
+    params(("id" = String, Path, description = "Conversation ID")),
+    responses(
+        (status = 200, body = serde_json::Value)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn list_msg(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -198,7 +262,19 @@ async fn get_msg(
     Ok(Json(ApiResponse::ok(result)))
 }
 
-async fn send_msg(
+#[utoipa::path(
+    post,
+    path = "/api/conversations/{id}/messages",
+    params(("id" = String, Path, description = "Conversation ID")),
+    request_body = SendMessageRequest,
+    responses(
+        (status = 202, body = ApiResponse<SendMessageResponse>),
+        (status = 400, body = ErrorResponse)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn send_msg(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -248,7 +324,18 @@ async fn update_artifact(
     Ok(Json(ApiResponse::ok(artifact)))
 }
 
-async fn cancel(
+#[utoipa::path(
+    post,
+    path = "/api/conversations/{id}/cancel",
+    params(("id" = String, Path, description = "Conversation ID")),
+    request_body = CancelConversationRequest,
+    responses(
+        (status = 200, body = serde_json::Value)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn cancel(
     State(state): State<ConversationRouterState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
@@ -350,7 +437,16 @@ async fn check_approval(
     Ok(Json(ApiResponse::ok(result)))
 }
 
-async fn active_count(
+#[utoipa::path(
+    get,
+    path = "/api/conversations/active-count",
+    responses(
+        (status = 200, body = ApiResponse<ActiveCountResponse>)
+    ),
+    tag = "conversation",
+    security(("bearer_auth" = []))
+)]
+pub async fn active_count(
     State(state): State<ConversationRouterState>,
     Extension(_user): Extension<CurrentUser>,
 ) -> Result<Json<ApiResponse<ActiveCountResponse>>, ApiError> {

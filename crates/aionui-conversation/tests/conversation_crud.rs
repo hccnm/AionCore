@@ -7,6 +7,7 @@ use aionui_api_types::{
 use aionui_common::{AgentKillReason, AgentType, ConversationSource, ConversationStatus, TimestampMs};
 use aionui_conversation::skill_resolver::SkillResolver;
 use aionui_conversation::{ConversationError, ConversationService};
+use aionui_db::models::ConversationRow;
 use aionui_db::{SqliteConversationRepository, init_database_memory};
 use aionui_realtime::EventBroadcaster;
 use serde_json::json;
@@ -129,6 +130,27 @@ fn make_create_req() -> CreateConversationRequest {
     .unwrap()
 }
 
+async fn insert_historical_aionrs(svc: &ConversationService) -> ConversationRow {
+    let id = format!("legacy-aionrs-{}", aionui_common::generate_short_id());
+    let row = ConversationRow {
+        id,
+        user_id: USER_ID.into(),
+        name: "legacy aionrs".into(),
+        r#type: AgentType::Aionrs.serde_name().into(),
+        extra: json!({ "workspace": ensure_test_workspace_path() }).to_string(),
+        model: Some(json!({ "provider_id": "p1", "model": "gpt-4o" }).to_string()),
+        status: Some("pending".into()),
+        source: Some("aionui".into()),
+        channel_chat_id: None,
+        pinned: false,
+        pinned_at: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    svc.conversation_repo().create(&row).await.unwrap();
+    row
+}
+
 // ── T1: Create conversation ────────────────────────────────────────
 
 #[tokio::test]
@@ -164,32 +186,16 @@ async fn t1_1_create_with_defaults() {
 async fn t1_2_create_each_agent_type() {
     let (svc, _, _task_mgr) = setup().await;
 
-    let types = vec![("acp", AgentType::Acp), ("aionrs", AgentType::Aionrs)];
+    let req: CreateConversationRequest = serde_json::from_value(json!({
+        "type": "acp",
+        "extra": {}
+    }))
+    .unwrap();
+    let resp = svc.create(USER_ID, req).await.unwrap();
+    assert_eq!(resp.r#type, AgentType::Acp);
+    assert!(resp.model.is_none());
 
-    for (type_str, expected_type) in types {
-        let body = if type_str == "aionrs" {
-            json!({
-                "type": type_str,
-                "model": { "provider_id": "p1", "model": "m1" },
-                "extra": {}
-            })
-        } else {
-            json!({
-                "type": type_str,
-                "extra": {}
-            })
-        };
-        let req: CreateConversationRequest = serde_json::from_value(body).unwrap();
-        let resp = svc.create(USER_ID, req).await.unwrap();
-        assert_eq!(resp.r#type, expected_type, "Type mismatch for {type_str}");
-        if type_str == "aionrs" {
-            assert!(resp.model.is_some(), "aionrs should keep top-level model");
-        } else {
-            assert!(resp.model.is_none(), "{type_str} should have no top-level model");
-        }
-    }
-
-    for type_str in ["openclaw-gateway", "nanobot", "remote", "gemini"] {
+    for type_str in ["aionrs", "openclaw-gateway", "nanobot", "remote", "gemini"] {
         let req: CreateConversationRequest = serde_json::from_value(json!({
             "type": type_str,
             "extra": {}
@@ -445,15 +451,8 @@ async fn t4_4_extra_merge_preserves_existing_keys() {
 async fn t4_5_update_model() {
     let (svc, _, task_mgr) = setup().await;
 
-    // Top-level model updates are only valid on aionrs conversations
-    // (Task 8 enforces the aionrs-only rule in update).
-    let create_req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "model": { "provider_id": "p1", "model": "m1" },
-        "extra": {}
-    }))
-    .unwrap();
-    let conv = svc.create(USER_ID, create_req).await.unwrap();
+    // Historical aionrs rows may still carry top-level model updates.
+    let conv = insert_historical_aionrs(&svc).await;
 
     let req: UpdateConversationRequest = serde_json::from_value(json!({
         "model": { "provider_id": "p2", "model": "new-model" }
@@ -705,7 +704,7 @@ async fn create_rejects_deprecated_remote_runtime() {
 }
 
 #[tokio::test]
-async fn create_accepts_top_level_model_for_aionrs() {
+async fn create_rejects_top_level_model_for_aionrs() {
     let (svc, _, _task_mgr) = setup().await;
 
     let req: CreateConversationRequest = serde_json::from_value(json!({
@@ -715,15 +714,12 @@ async fn create_accepts_top_level_model_for_aionrs() {
     }))
     .unwrap();
 
-    let resp = svc.create(USER_ID, req).await.unwrap();
-    assert_eq!(resp.r#type, AgentType::Aionrs);
-    let model = resp.model.expect("aionrs response should carry top-level model");
-    assert_eq!(model.provider_id, "p1");
-    assert_eq!(model.model, "gpt-4o");
+    let err = svc.create(USER_ID, req).await.unwrap_err();
+    assert!(matches!(err, ConversationError::BadRequest { .. }));
 }
 
 #[tokio::test]
-async fn create_aionrs_strips_extra_model_field() {
+async fn create_aionrs_with_extra_model_is_rejected() {
     let (svc, _, _task_mgr) = setup().await;
     let workspace = ensure_test_workspace_path();
 
@@ -737,14 +733,8 @@ async fn create_aionrs_strips_extra_model_field() {
     }))
     .unwrap();
 
-    let resp = svc.create(USER_ID, req).await.unwrap();
-    assert!(
-        !resp.extra.as_object().unwrap().contains_key("model"),
-        "aionrs create must strip extra.model to avoid dual source of truth; got {:?}",
-        resp.extra
-    );
-    // Top-level model is still present and wins.
-    assert_eq!(resp.model.unwrap().model, "gpt-4o");
+    let err = svc.create(USER_ID, req).await.unwrap_err();
+    assert!(matches!(err, ConversationError::BadRequest { .. }));
 }
 
 #[tokio::test]
@@ -768,13 +758,7 @@ async fn update_rejects_top_level_model_for_acp() {
 async fn update_accepts_top_level_model_for_aionrs() {
     let (svc, _, task_mgr) = setup().await;
 
-    let create_req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "model": { "provider_id": "p1", "model": "gpt-4o" },
-        "extra": {}
-    }))
-    .unwrap();
-    let conv = svc.create(USER_ID, create_req).await.unwrap();
+    let conv = insert_historical_aionrs(&svc).await;
 
     let req: UpdateConversationRequest = serde_json::from_value(json!({
         "model": { "provider_id": "p1", "model": "gpt-4o-mini" }
@@ -820,13 +804,7 @@ async fn update_rejects_acp_runtime_current_extra_fields() {
 async fn update_aionrs_strips_extra_model_from_patch() {
     let (svc, _, task_mgr) = setup().await;
 
-    let create_req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "model": { "provider_id": "p1", "model": "gpt-4o" },
-        "extra": {}
-    }))
-    .unwrap();
-    let conv = svc.create(USER_ID, create_req).await.unwrap();
+    let conv = insert_historical_aionrs(&svc).await;
 
     // Client mistakenly sends extra.model on an aionrs PATCH. It should be
     // silently stripped from the merged extra, not persisted.

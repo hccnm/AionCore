@@ -69,13 +69,17 @@ impl AgentService {
 
 // Agent operations
 impl AgentService {
+    fn is_public_new_conversation_agent(agent: &AgentMetadata) -> bool {
+        agent.agent_type.supports_new_conversation()
+    }
+
     pub async fn list_agents(&self) -> Result<Vec<AgentMetadata>, AgentError> {
         Ok(self
             .registry
             .list_all()
             .await
             .into_iter()
-            .filter(|agent| agent.agent_type.supports_new_conversation())
+            .filter(Self::is_public_new_conversation_agent)
             .collect())
     }
 
@@ -86,7 +90,7 @@ impl AgentService {
             .list_all()
             .await
             .into_iter()
-            .filter(|agent| agent.agent_type.supports_new_conversation())
+            .filter(Self::is_public_new_conversation_agent)
             .collect())
     }
 

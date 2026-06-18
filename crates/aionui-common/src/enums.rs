@@ -52,7 +52,7 @@ impl AgentType {
     }
 
     pub fn supports_new_conversation(&self) -> bool {
-        matches!(self, AgentType::Acp | AgentType::Aionrs)
+        matches!(self, AgentType::Acp)
     }
 
     pub fn is_deprecated_runtime(&self) -> bool {
@@ -365,8 +365,8 @@ mod tests {
     #[test]
     fn agent_type_new_conversation_support_policy_is_explicit() {
         assert!(AgentType::Acp.supports_new_conversation());
-        assert!(AgentType::Aionrs.supports_new_conversation());
 
+        assert!(!AgentType::Aionrs.supports_new_conversation());
         assert!(!AgentType::Gemini.supports_new_conversation());
         assert!(!AgentType::Codex.supports_new_conversation());
         assert!(!AgentType::OpenclawGateway.supports_new_conversation());
@@ -377,8 +377,8 @@ mod tests {
     #[test]
     fn agent_type_deprecated_runtime_policy_matches_new_conversation_support() {
         assert!(!AgentType::Acp.is_deprecated_runtime());
-        assert!(!AgentType::Aionrs.is_deprecated_runtime());
 
+        assert!(AgentType::Aionrs.is_deprecated_runtime());
         assert!(AgentType::Gemini.is_deprecated_runtime());
         assert!(AgentType::Codex.is_deprecated_runtime());
         assert!(AgentType::OpenclawGateway.is_deprecated_runtime());

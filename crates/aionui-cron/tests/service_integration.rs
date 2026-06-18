@@ -683,7 +683,7 @@ async fn cj1_create_cron_job() {
 async fn create_job_rejects_deprecated_agent_types() {
     let (svc, _, _) = setup().await;
 
-    for agent_type in ["openclaw-gateway", "nanobot", "remote", "gemini", "codex"] {
+    for agent_type in ["aionrs", "openclaw-gateway", "nanobot", "remote", "gemini", "codex"] {
         let mut req = make_create_req(&format!("Deprecated {agent_type}"), every_60s());
         req.agent_type = agent_type.to_owned();
 
@@ -1352,7 +1352,12 @@ async fn icron_service_create_job_forces_full_auto_mode_for_generated_crons() {
     assert!(hermes.success);
 
     let aionrs = ICronService::create_job(&svc, "user_1", "conv_mode_aionrs", &params).await;
-    assert!(aionrs.success);
+    assert!(!aionrs.success);
+    assert!(
+        aionrs
+            .message
+            .contains("This agent type is no longer supported for new conversations.")
+    );
 
     let gemini_jobs = svc
         .list_jobs(&ListCronJobsQuery {
@@ -1416,13 +1421,7 @@ async fn icron_service_create_job_forces_full_auto_mode_for_generated_crons() {
         })
         .await
         .unwrap();
-    assert_eq!(
-        aionrs_jobs[0]
-            .agent_config
-            .as_ref()
-            .and_then(|config| config.mode.as_deref()),
-        Some("yolo")
-    );
+    assert!(aionrs_jobs.is_empty());
 }
 
 // ── ICronService trait: list ───────────────────────────────────────

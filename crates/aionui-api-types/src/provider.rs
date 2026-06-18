@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use aionui_common::ProtocolType;
 
 /// Model capability type discriminant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelType {
     Text,
@@ -21,7 +21,7 @@ pub enum ModelType {
 }
 
 /// A single model capability entry.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct ModelCapability {
     #[serde(rename = "type")]
     pub capability_type: ModelType,
@@ -30,7 +30,7 @@ pub struct ModelCapability {
 }
 
 /// Health status values for a model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum HealthStatus {
     Unknown,
@@ -39,7 +39,7 @@ pub enum HealthStatus {
 }
 
 /// Per-model health check information.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct ModelHealthStatus {
     pub status: HealthStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,7 +94,7 @@ pub struct ProviderHealthCheckResponse {
 }
 
 /// AWS Bedrock authentication method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BedrockAuthMethod {
     #[serde(rename = "accessKey")]
@@ -103,7 +103,7 @@ pub enum BedrockAuthMethod {
 }
 
 /// AWS Bedrock-specific configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct BedrockConfig {
     pub auth_method: BedrockAuthMethod,
     pub region: String,
@@ -120,7 +120,7 @@ pub struct BedrockConfig {
 /// The `api_key` field is returned in plaintext (decrypted on read). Storage
 /// remains encrypted at rest. Pre-launch convention for the frontend
 /// local-store → backend migration; no masking applied.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct ProviderResponse {
     pub id: String,
     pub platform: String,
@@ -148,7 +148,7 @@ pub struct ProviderResponse {
 }
 
 /// Request body for `POST /api/providers`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateProviderRequest {
     /// Optional caller-supplied id. When `None`, the server generates one.
     /// Lets callers preserve a locally-known id across the create boundary
@@ -187,7 +187,7 @@ fn default_true() -> bool {
 /// Request body for `PUT /api/providers/:id`.
 ///
 /// All fields are optional — partial update semantics.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct UpdateProviderRequest {
     pub platform: Option<String>,
     pub name: Option<String>,
@@ -230,7 +230,7 @@ pub struct FetchModelsAnonymousRequest {
 
 /// A model entry that can be either a bare ID string or an object with
 /// id and name.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum ModelInfo {
     Id(String),
@@ -238,7 +238,7 @@ pub enum ModelInfo {
 }
 
 /// Response for `POST /api/providers/:id/models`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct FetchModelsResponse {
     pub models: Vec<ModelInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]

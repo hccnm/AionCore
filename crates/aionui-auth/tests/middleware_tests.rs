@@ -474,13 +474,10 @@ fn t13_1_authorization_header_takes_priority() {
 }
 
 #[test]
-fn t13_2_cookie_fallback() {
+fn t13_2_cookie_is_not_an_auth_fallback() {
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::COOKIE, "aionui-session=fallback_tok".parse().unwrap());
-    assert_eq!(
-        aionui_auth::extract_token_from_headers(&headers),
-        Some("fallback_tok".into())
-    );
+    assert_eq!(aionui_auth::extract_token_from_headers(&headers), None);
 }
 
 #[test]

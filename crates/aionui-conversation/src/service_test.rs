@@ -804,6 +804,7 @@ async fn create_rejects_deprecated_agent_types_for_new_conversations() {
     let (svc, _broadcaster, _repo, _task_mgr) = make_service();
 
     for agent_type in [
+        AgentType::Aionrs,
         AgentType::Gemini,
         AgentType::Codex,
         AgentType::OpenclawGateway,
@@ -910,22 +911,23 @@ async fn create_with_custom_name_and_source() {
 }
 
 #[tokio::test]
-async fn create_stores_model_as_json() {
+async fn create_rejects_aionrs_with_top_level_model() {
     let (svc, _broadcaster, _repo, _task_mgr) = make_service();
     let workspace = ensure_test_workspace_path();
 
-    // Top-level model is only valid for aionrs conversations.
     let req: CreateConversationRequest = serde_json::from_value(json!({
         "type": "aionrs",
         "model": { "provider_id": "p1", "model": "m1" },
         "extra": { "workspace": workspace }
     }))
     .unwrap();
-    let resp = svc.create("user_1", req).await.unwrap();
 
-    let model = resp.model.unwrap();
-    assert_eq!(model.provider_id, "p1");
-    assert_eq!(model.model, "m1");
+    let err = svc.create("user_1", req).await.unwrap_err();
+    assert_eq!(err.error_code(), "BAD_REQUEST");
+    assert!(
+        err.to_string()
+            .contains("This agent type is no longer supported for new conversations.")
+    );
 }
 
 // ── Get tests ──────────────────────────────────────────────────────
@@ -1122,18 +1124,10 @@ async fn update_extra_merge() {
 
 #[tokio::test]
 async fn update_model() {
-    let (svc, _broadcaster, _repo, task_mgr) = make_service();
-    let workspace = ensure_test_workspace_path();
+    let (svc, _broadcaster, repo, task_mgr) = make_service();
 
-    // Top-level model updates are only valid on aionrs conversations
-    // (Task 8 enforces the aionrs-only rule in update).
-    let create_req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "model": { "provider_id": "p1", "model": "m1" },
-        "extra": { "workspace": workspace }
-    }))
-    .unwrap();
-    let conv = svc.create("user_1", create_req).await.unwrap();
+    // Historical aionrs rows may still carry top-level model updates.
+    let conv = insert_conversation_with_type(&repo, "user_1", AgentType::Aionrs).await;
 
     let req: UpdateConversationRequest = serde_json::from_value(json!({
         "model": { "provider_id": "p2", "model": "new-model" }
@@ -2189,6 +2183,7 @@ async fn send_message_rejects_legacy_runtime_conversations_as_archived() {
     let task_mgr: Arc<dyn IWorkerTaskManager> = Arc::new(MockTaskManager::new());
 
     for agent_type in [
+        AgentType::Aionrs,
         AgentType::Gemini,
         AgentType::Codex,
         AgentType::OpenclawGateway,
@@ -3534,34 +3529,40 @@ async fn create_links_preset_skills_into_custom_acp_workspace_when_backend_suppo
 }
 
 #[tokio::test]
-async fn warmup_restores_skill_links_for_recreated_auto_workspace() {
+async fn warmup_rejects_historical_aionrs_auto_workspace() {
     let resolver = Arc::new(RecordingSkillResolver::new(vec!["cron".into()]));
     let links = resolver.links.clone();
-    let (svc, _broadcaster, _repo, _task_mgr) = make_service_with_resolver(resolver);
+    let (svc, _broadcaster, repo, _task_mgr) = make_service_with_resolver(resolver);
 
-    let req: CreateConversationRequest = serde_json::from_value(json!({
-        "type": "aionrs",
-        "extra": {},
-    }))
-    .unwrap();
-    let resp = svc.create("user-1", req).await.unwrap();
-    let workspace = PathBuf::from(resp.extra["workspace"].as_str().unwrap());
-    assert!(workspace.join(".aionrs/skills/cron").is_dir());
-
-    std::fs::remove_dir_all(&workspace).unwrap();
-    assert!(!workspace.exists());
+    let row = ConversationRow {
+        id: format!("legacy-aionrs-{}", aionui_common::generate_short_id()),
+        user_id: "user-1".into(),
+        name: "legacy aionrs".into(),
+        r#type: AgentType::Aionrs.serde_name().into(),
+        extra: json!({ "skills": ["cron"] }).to_string(),
+        model: None,
+        status: Some("finished".into()),
+        source: Some("aionui".into()),
+        channel_chat_id: None,
+        pinned: false,
+        pinned_at: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    repo.create(&row).await.unwrap();
     links.lock().unwrap().clear();
 
-    let task_mgr: Arc<dyn IWorkerTaskManager> =
-        Arc::new(MockTaskManagerWithWorkspace::new(workspace.to_str().unwrap()));
-    svc.warmup("user-1", &resp.id, &task_mgr).await.unwrap();
+    let task_mgr: Arc<dyn IWorkerTaskManager> = Arc::new(MockTaskManager::new());
+    let err = svc.warmup("user-1", &row.id, &task_mgr).await.unwrap_err();
 
-    assert!(workspace.join(".aionrs/skills/cron").is_dir());
+    assert_eq!(err.error_code(), "CONVERSATION_ARCHIVED");
+    assert!(
+        err.to_string()
+            .contains("This historical conversation can no longer be continued. Please start a new conversation."),
+        "unexpected archived message: {err}"
+    );
     let calls = links.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].workspace, workspace);
-    assert_eq!(calls[0].rel_dirs, vec![".aionrs/skills"]);
-    assert_eq!(calls[0].skill_names, vec!["cron"]);
+    assert!(calls.is_empty());
 }
 
 #[tokio::test]

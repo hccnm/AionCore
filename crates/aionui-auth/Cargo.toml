@@ -15,6 +15,7 @@ dashmap.workspace = true
 axum.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+utoipa.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 getrandom.workspace = true
