@@ -122,7 +122,7 @@ async fn sh2_open_file_not_found() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // SH-4: show-item-in-folder — path not found
@@ -158,7 +158,7 @@ async fn sh6_open_external_command_injection() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // SH-7: open-external — disallowed scheme
@@ -194,7 +194,7 @@ async fn sh8_check_tool_terminal() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["installed"], true);
 }
 
@@ -214,7 +214,7 @@ async fn sh9_check_tool_explorer() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["installed"], true);
 }
 
@@ -234,7 +234,7 @@ async fn sh10_check_tool_vscode() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"]["installed"].is_boolean());
 }
 
@@ -305,7 +305,7 @@ async fn st3_stt_disabled() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "STT_DISABLED");
+    assert_eq!(json["data"]["error_code"], "STT_DISABLED");
 }
 
 // ST-4: STT config not set (treated as disabled)
@@ -324,7 +324,7 @@ async fn st4_stt_config_not_set() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "STT_DISABLED");
+    assert_eq!(json["data"]["error_code"], "STT_DISABLED");
 }
 
 // ST-5: OpenAI not configured (missing API key)
@@ -355,7 +355,7 @@ async fn st5_openai_not_configured() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "STT_OPENAI_NOT_CONFIGURED");
+    assert_eq!(json["data"]["error_code"], "STT_OPENAI_NOT_CONFIGURED");
 }
 
 // ST-6: Deepgram not configured (missing API key)
@@ -386,7 +386,7 @@ async fn st6_deepgram_not_configured() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "STT_DEEPGRAM_NOT_CONFIGURED");
+    assert_eq!(json["data"]["error_code"], "STT_DEEPGRAM_NOT_CONFIGURED");
 }
 
 // ST-7: STT third-party API failure (fake API key → 401)
@@ -428,7 +428,7 @@ async fn st7_stt_api_failure() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "STT_REQUEST_FAILED");
+    assert_eq!(json["data"]["error_code"], "STT_REQUEST_FAILED");
 }
 
 // ST-8: multipart missing fileName
@@ -454,7 +454,7 @@ async fn st8_multipart_missing_filename() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // ST-9: multipart missing file
@@ -480,7 +480,7 @@ async fn st9_multipart_missing_file() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // ST-1: OpenAI transcription success (mocked)
@@ -522,7 +522,7 @@ async fn st1_openai_transcription_success() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["text"], "hello world");
     assert_eq!(json["data"]["model"], "whisper-1");
     assert_eq!(json["data"]["provider"], "openai");
@@ -579,7 +579,7 @@ async fn st2_deepgram_transcription_success() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["text"], "hello from deepgram");
     assert_eq!(json["data"]["provider"], "deepgram");
 }
@@ -624,7 +624,7 @@ async fn st10_language_hint_passed() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["text"], "你好世界");
 }
 
@@ -672,7 +672,7 @@ async fn st11_web_frontend_tools_key_audio_part_headers_only() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["text"], "web frontend");
 }
 
@@ -692,7 +692,7 @@ async fn au1_shell_unauthenticated() {
         .body(Body::from(r#"{"file_path":"/tmp/test.txt"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // AU-2: unauthenticated STT request rejected
@@ -713,7 +713,7 @@ async fn au2_stt_unauthenticated() {
         .body(Body::from(body))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // M-145: mailto scheme URL positive test
@@ -756,5 +756,5 @@ async fn st_multipart_missing_mimetype() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }

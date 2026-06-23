@@ -1,6 +1,6 @@
 //! End-to-end integration tests for the complete authentication flow.
 //!
-//! These tests exercise the full application stack (security headers, CSRF,
+//! These tests exercise the full application stack (security headers and
 //! auth routes) via `aionui_app::create_router`, covering test-plan items
 //! T12 (security middleware), T13 (token extraction), T14 (initial bootstrap).
 
@@ -100,7 +100,7 @@ fn post_json_with_csrf(uri: &str, body: &str, token: &str, csrf: &str) -> Reques
         .unwrap()
 }
 
-/// Set up a user and login, returning (session_token, csrf_token).
+/// Set up a user and login, returning (session_token, legacy_empty_csrf_token).
 ///
 /// Seeded `system_default_user` already owns `username = "admin"` with an empty
 /// hash; if the test uses that name, overwrite the seed row in place. Other
@@ -123,19 +123,14 @@ async fn setup_and_login(
         services.user_repo.create_user(username, &hash).await.unwrap();
     }
 
-    // Get CSRF token from a GET request first
-    let resp = app.clone().oneshot(get_request("/api/auth/status")).await.unwrap();
-    let csrf = extract_csrf_token(&resp).expect("CSRF cookie should be set");
-
-    // Login (exempt from CSRF)
     let body = format!(r#"{{"username":"{username}","password":"{password}"}}"#);
     let resp = app.clone().oneshot(post_json_login("/login", &body)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "login should succeed");
 
     let json = body_json(resp).await;
-    let token = json["token"].as_str().unwrap().to_owned();
+    let token = json["data"]["token"].as_str().unwrap().to_owned();
 
-    (token, csrf)
+    (token, String::new())
 }
 
 // ===========================================================================
@@ -168,11 +163,10 @@ async fn t12_1_security_headers_on_error_responses() {
 }
 
 #[tokio::test]
-async fn t12_2_csrf_blocks_post_without_token() {
+async fn t12_2_bearer_post_does_not_require_csrf() {
     let (mut app, services) = build_app().await;
     let (token, _csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 
-    // POST /logout without CSRF token → 403
     let req = Request::builder()
         .method("POST")
         .uri("/logout")
@@ -181,37 +175,31 @@ async fn t12_2_csrf_blocks_post_without_token() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
 
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-    let json = body_json(resp).await;
-    assert!(
-        json["error"].as_str().unwrap_or("").contains("CSRF"),
-        "error message should mention CSRF"
-    );
-}
-
-#[tokio::test]
-async fn t12_2_csrf_allows_post_with_valid_token() {
-    let (mut app, services) = build_app().await;
-    let (token, csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
-
-    // POST /logout with valid CSRF token → 200
-    let req = post_json_with_csrf("/logout", "", &token, &csrf);
-    let resp = app.oneshot(req).await.unwrap();
-
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn t12_2_csrf_exempt_paths() {
+async fn t12_2_state_changing_post_without_auth_is_unauthorized() {
     let (app, _services) = build_app().await;
 
-    // POST /login is exempt from CSRF
+    let req = Request::builder()
+        .method("POST")
+        .uri("/logout")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn t12_2_login_does_not_require_csrf() {
+    let (app, _services) = build_app().await;
+
     let req = post_json_login("/login", r#"{"username":"x","password":"y"}"#);
     let resp = app.clone().oneshot(req).await.unwrap();
-    // Should get 401 (auth failure), not 403 (CSRF failure)
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-    // POST /api/auth/qr-login is exempt from CSRF
     let req = post_json_login("/api/auth/qr-login", r#"{"qr_token":"fake"}"#);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -270,7 +258,7 @@ async fn t13_1_authorization_header_takes_priority() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["user"]["username"], "admin");
+    assert_eq!(json["data"]["user"]["username"], "admin");
 }
 
 #[tokio::test]
@@ -284,7 +272,7 @@ async fn t13_2_cookie_fallback() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["user"]["username"], "admin");
+    assert_eq!(json["data"]["user"]["username"], "admin");
 }
 
 #[tokio::test]
@@ -296,7 +284,7 @@ async fn t13_3_no_token_fails() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 // ===========================================================================
@@ -304,25 +292,25 @@ async fn t13_3_no_token_fails() {
 // ===========================================================================
 
 #[tokio::test]
-async fn t14_1_fresh_system_needs_setup() {
+async fn t14_1_seeded_system_does_not_need_setup() {
     let (app, _services) = build_app().await;
 
     let resp = app.oneshot(get_request("/api/auth/status")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert_eq!(json["needs_setup"], true);
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["data"]["needs_setup"], false);
 }
 
 #[tokio::test]
-async fn t14_2_setup_then_login() {
+async fn t14_2_seeded_system_credentials_then_login() {
     let (app, services) = build_app().await;
 
-    // Fresh system: needsSetup=true
+    // The memory test database seeds a system user, so setup is not required.
     let resp = app.clone().oneshot(get_request("/api/auth/status")).await.unwrap();
     let json = body_json(resp).await;
-    assert_eq!(json["needs_setup"], true);
+    assert_eq!(json["data"]["needs_setup"], false);
 
     // Set system user credentials (simulating initial setup)
     let hash = aionui_auth::hash_password("Admin@Pass1").unwrap();
@@ -335,7 +323,7 @@ async fn t14_2_setup_then_login() {
     // Now needsSetup=false
     let resp = app.clone().oneshot(get_request("/api/auth/status")).await.unwrap();
     let json = body_json(resp).await;
-    assert_eq!(json["needs_setup"], false);
+    assert_eq!(json["data"]["needs_setup"], false);
 
     // Login with new credentials
     let req = post_json_login("/login", r#"{"username":"admin","password":"Admin@Pass1"}"#);
@@ -343,16 +331,16 @@ async fn t14_2_setup_then_login() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert_eq!(json["user"]["username"], "admin");
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["data"]["user"]["username"], "admin");
 
     // Authenticated status check
-    let token = json["token"].as_str().unwrap();
+    let token = json["data"]["token"].as_str().unwrap();
     let req = get_with_token("/api/auth/status", token);
     let resp = app.oneshot(req).await.unwrap();
     let json = body_json(resp).await;
-    assert_eq!(json["is_authenticated"], true);
-    assert_eq!(json["needs_setup"], false);
+    assert_eq!(json["data"]["is_authenticated"], true);
+    assert_eq!(json["data"]["needs_setup"], false);
 }
 
 // ===========================================================================
@@ -365,9 +353,8 @@ async fn full_auth_flow_e2e() {
 
     // 1. Check initial status
     let resp = app.clone().oneshot(get_request("/api/auth/status")).await.unwrap();
-    let csrf = extract_csrf_token(&resp).expect("CSRF cookie on first request");
     let json = body_json(resp).await;
-    assert_eq!(json["needs_setup"], true);
+    assert_eq!(json["data"]["needs_setup"], false);
 
     // 2. Setup user
     let hash = aionui_auth::hash_password("Initial@Pass1").unwrap();
@@ -383,7 +370,7 @@ async fn full_auth_flow_e2e() {
     assert_eq!(resp.status(), StatusCode::OK);
     let session_token = extract_session_token(&resp).expect("session cookie set");
     let json = body_json(resp).await;
-    let token = json["token"].as_str().unwrap().to_owned();
+    let token = json["data"]["token"].as_str().unwrap().to_owned();
 
     // Verify session token matches response body token
     assert_eq!(session_token, token);
@@ -393,14 +380,14 @@ async fn full_auth_flow_e2e() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["user"]["username"], "admin");
+    assert_eq!(json["data"]["user"]["username"], "admin");
 
-    // 5. Change password (needs CSRF)
+    // 5. Change password
     let req = post_json_with_csrf(
         "/api/auth/change-password",
         r#"{"current_password":"Initial@Pass1","new_password":"Updated@Pass2"}"#,
         &token,
-        &csrf,
+        "",
     );
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -410,17 +397,17 @@ async fn full_auth_flow_e2e() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 
     // 7. Login with new password
     let req = post_json_login("/login", r#"{"username":"admin","password":"Updated@Pass2"}"#);
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    let new_token = json["token"].as_str().unwrap().to_owned();
+    let new_token = json["data"]["token"].as_str().unwrap().to_owned();
 
-    // 8. Logout (needs CSRF)
-    let req = post_json_with_csrf("/logout", "", &new_token, &csrf);
+    // 8. Logout
+    let req = post_json_with_csrf("/logout", "", &new_token, "");
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
@@ -429,21 +416,20 @@ async fn full_auth_flow_e2e() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 // ===========================================================================
-// CSRF cookie is set on first response
+// CSRF cookie is not part of the SaaS frontend contract
 // ===========================================================================
 
 #[tokio::test]
-async fn csrf_cookie_set_on_first_get() {
+async fn csrf_cookie_not_set_on_first_get() {
     let (app, _services) = build_app().await;
 
     let resp = app.oneshot(get_request("/health")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let csrf = extract_csrf_token(&resp);
-    assert!(csrf.is_some(), "CSRF cookie should be set on first request");
-    assert_eq!(csrf.unwrap().len(), 64, "CSRF token should be 64 hex chars");
+    assert!(csrf.is_none(), "CSRF cookie should not be set on first request");
 }

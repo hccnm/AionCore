@@ -48,7 +48,7 @@ async fn test_non_local_mode_requires_auth() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 
     services.database.close().await;
 }

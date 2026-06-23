@@ -11,8 +11,10 @@ fn t3_1_success_response_with_data() {
     let resp = ApiResponse::ok("result");
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["message"], "ok");
     assert_eq!(json["data"], "result");
+    assert!(json.get("trace_id").is_some());
 }
 
 #[test]
@@ -20,10 +22,9 @@ fn t3_1_success_response_with_message() {
     let resp = ApiResponse::message("Operation completed");
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["message"], "Operation completed");
-    // data should be absent (not null)
-    assert!(json.get("data").is_none());
+    assert_eq!(json["data"], serde_json::Value::Null);
 }
 
 #[test]
@@ -31,7 +32,7 @@ fn t3_1_success_response_with_data_and_message() {
     let resp = ApiResponse::with_message(vec![1, 2, 3], "Found 3 items");
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], serde_json::json!([1, 2, 3]));
     assert_eq!(json["message"], "Found 3 items");
 }
@@ -49,7 +50,7 @@ fn t3_1_success_response_struct_data() {
     });
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["id"], "u1");
     assert_eq!(json["data"]["name"], "Alice");
 }
@@ -58,22 +59,21 @@ fn t3_1_success_response_struct_data() {
 
 #[test]
 fn t3_2_error_response_format() {
-    let resp = ErrorResponse::new("Resource not found", "NOT_FOUND");
+    let resp = ErrorResponse::new("Resource not found", 404);
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], false);
-    assert_eq!(json["error"], "Resource not found");
-    assert_eq!(json["code"], "NOT_FOUND");
+    assert_eq!(json["code"], 404);
+    assert_eq!(json["message"], "Resource not found");
+    assert_eq!(json["data"], serde_json::Value::Null);
 }
 
 #[test]
 fn t3_2_error_response_has_all_fields() {
-    let resp = ErrorResponse::new("err", "CODE");
+    let resp = ErrorResponse::new("err", 500);
     let json = serde_json::to_value(&resp).unwrap();
 
-    // Verify all three required fields exist
-    assert!(json.get("success").is_some());
-    assert!(json.get("error").is_some());
     assert!(json.get("code").is_some());
-    assert!(json.get("details").is_none());
+    assert!(json.get("message").is_some());
+    assert!(json.get("data").is_some());
+    assert!(json.get("trace_id").is_some());
 }

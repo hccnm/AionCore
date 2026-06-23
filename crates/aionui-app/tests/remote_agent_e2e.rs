@@ -35,7 +35,7 @@ async fn create_agent(app: &mut axum::Router, token: &str, csrf: &str, body: ser
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     json
 }
 
@@ -101,7 +101,7 @@ async fn t1_4_create_unauthenticated() {
         .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── 1.2 List Remote Agents ──────────────────────────────────────────
@@ -273,7 +273,7 @@ async fn t6_1_test_connection_invalid_protocol() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -290,7 +290,7 @@ async fn t6_2_test_connection_unauthenticated() {
         .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── 1.7 Handshake ───────────────────────────────────────────────────

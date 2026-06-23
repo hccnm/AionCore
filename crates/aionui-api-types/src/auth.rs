@@ -12,6 +12,7 @@ pub struct PublicUser {
 /// Login request body for `POST /login`.
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
+    #[serde(alias = "phone")]
     pub username: String,
     pub password: String,
 }
@@ -19,20 +20,13 @@ pub struct LoginRequest {
 /// Login success response for `POST /login` and `POST /api/auth/qr-login`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginResponse {
-    pub success: bool,
-    pub message: String,
     pub user: PublicUser,
     pub token: String,
 }
 
 impl LoginResponse {
     pub fn new(user: PublicUser, token: String) -> Self {
-        Self {
-            success: true,
-            message: "Login successful".to_owned(),
-            user,
-            token,
-        }
+        Self { user, token }
     }
 }
 
@@ -52,7 +46,6 @@ pub struct QrLoginRequest {
 /// Auth status response for `GET /api/auth/status`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthStatusResponse {
-    pub success: bool,
     pub needs_setup: bool,
     pub user_count: u64,
     pub is_authenticated: bool,
@@ -67,21 +60,18 @@ pub struct RefreshTokenRequest {
 /// User info response for `GET /api/auth/user`.
 #[derive(Debug, Serialize)]
 pub struct UserInfoResponse {
-    pub success: bool,
     pub user: PublicUser,
 }
 
 /// Refresh token response for `POST /api/auth/refresh`.
 #[derive(Debug, Serialize)]
 pub struct RefreshResponse {
-    pub success: bool,
     pub token: String,
 }
 
 /// WebSocket token response for `GET /api/ws-token`.
 #[derive(Debug, Serialize)]
 pub struct WsTokenResponse {
-    pub success: bool,
     pub ws_token: String,
     pub expires_in: u64,
 }
@@ -169,8 +159,6 @@ mod tests {
             username: "admin".into(),
         };
         let resp = LoginResponse::new(user.clone(), "jwt_token".into());
-        assert!(resp.success);
-        assert_eq!(resp.message, "Login successful");
         assert_eq!(resp.user, user);
         assert_eq!(resp.token, "jwt_token");
     }
@@ -185,8 +173,6 @@ mod tests {
             "eyJhbGciOi".into(),
         );
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
-        assert_eq!(json["message"], "Login successful");
         assert_eq!(json["user"]["id"], "auth_123");
         assert_eq!(json["user"]["username"], "admin");
         assert_eq!(json["token"], "eyJhbGciOi");
@@ -224,13 +210,11 @@ mod tests {
     #[test]
     fn test_auth_status_response_snake_case() {
         let resp = AuthStatusResponse {
-            success: true,
             needs_setup: true,
             user_count: 0,
             is_authenticated: false,
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
         assert_eq!(json["needs_setup"], true);
         assert_eq!(json["user_count"], 0);
         assert_eq!(json["is_authenticated"], false);
@@ -243,13 +227,11 @@ mod tests {
     #[test]
     fn test_auth_status_response_deserialization() {
         let raw = json!({
-            "success": true,
             "needs_setup": false,
             "user_count": 3,
             "is_authenticated": true
         });
         let resp: AuthStatusResponse = serde_json::from_value(raw).unwrap();
-        assert!(resp.success);
         assert!(!resp.needs_setup);
         assert_eq!(resp.user_count, 3);
         assert!(resp.is_authenticated);

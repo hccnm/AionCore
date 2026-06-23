@@ -174,7 +174,7 @@ async fn wp4_word_preview_officecli_not_available() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let url = json["data"]["url"].as_str().unwrap();
     assert!(url.is_empty(), "url should be empty when officecli unavailable");
     assert_eq!(json["data"]["error"], "OFFICECLI_INSTALL_FAILED");
@@ -199,7 +199,7 @@ async fn wp5_word_preview_with_workspace_accepts_non_sandbox_path() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["error"], "OFFICECLI_INSTALL_FAILED");
 }
 
@@ -221,7 +221,7 @@ async fn wp6_word_preview_without_workspace_rejects_non_sandbox_path() {
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "PATH_OUTSIDE_SANDBOX");
+    assert_eq!(json["data"]["error_code"], "PATH_OUTSIDE_SANDBOX");
 }
 
 #[tokio::test]
@@ -243,7 +243,7 @@ async fn ep1_excel_preview_with_workspace_accepts_non_sandbox_path() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["error"], "OFFICECLI_INSTALL_FAILED");
 }
 
@@ -266,7 +266,7 @@ async fn pp1_ppt_preview_with_workspace_accepts_non_sandbox_path() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["error"], "OFFICECLI_INSTALL_FAILED");
 }
 
@@ -286,7 +286,7 @@ async fn sh1_save_snapshot() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 
     let data = &json["data"];
     assert!(data["id"].is_string());
@@ -319,7 +319,7 @@ async fn sh2_list_snapshots() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 
     let snapshots = json["data"].as_array().unwrap();
     assert_eq!(snapshots.len(), 3);
@@ -350,7 +350,7 @@ async fn sh3_get_snapshot_content() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["content"], "# Hello");
     assert_eq!(json["data"]["snapshot"]["id"], snapshot_id);
 }
@@ -371,7 +371,7 @@ async fn sh4_get_nonexistent_snapshot() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].is_null());
 }
 
@@ -493,7 +493,7 @@ async fn so1_detect_no_service() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"]["url"].is_null());
 }
 
@@ -510,7 +510,7 @@ async fn so2_detect_with_preferred_url() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"]["url"].is_null());
 }
 
@@ -533,7 +533,7 @@ async fn dc1_excel_to_json() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["to"], "excel-json");
     assert_eq!(json["data"]["result"]["success"], true);
 
@@ -559,7 +559,7 @@ async fn dc4_excel_file_not_found() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "BAD_REQUEST");
+    assert_eq!(json["data"]["error_code"], "BAD_REQUEST");
 }
 
 #[tokio::test]
@@ -581,7 +581,7 @@ async fn dc5_document_convert_rejects_outside_sandbox() {
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "PATH_OUTSIDE_SANDBOX");
+    assert_eq!(json["data"]["error_code"], "PATH_OUTSIDE_SANDBOX");
 }
 
 // ── DC-9: Invalid conversion target ─────────────────────────────────

@@ -26,7 +26,7 @@ async fn get_plugins_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     let data = json["data"].as_array().unwrap();
     assert_eq!(data.len(), 7);
     let types: std::collections::HashSet<_> = data.iter().filter_map(|item| item["type"].as_str()).collect();
@@ -50,7 +50,7 @@ async fn get_plugins_unauthenticated() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // EP-3: Enable missing pluginId fails
@@ -194,7 +194,7 @@ async fn get_pairings_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert!(json["data"].as_array().unwrap().is_empty());
 }
 
@@ -258,7 +258,7 @@ async fn get_users_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert!(json["data"].as_array().unwrap().is_empty());
 }
 
@@ -305,7 +305,7 @@ async fn get_sessions_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert!(json["data"].as_array().unwrap().is_empty());
 }
 
@@ -330,7 +330,7 @@ async fn sync_settings_valid() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert!(json["data"]["success"].as_bool().unwrap());
 }
 

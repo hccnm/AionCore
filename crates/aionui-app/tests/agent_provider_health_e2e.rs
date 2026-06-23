@@ -31,7 +31,7 @@ async fn provider_health_check_unauthenticated_is_rejected() {
 }
 
 #[tokio::test]
-async fn provider_health_check_requires_csrf_for_post() {
+async fn provider_health_check_accepts_bearer_without_csrf() {
     let (mut app, services) = build_app().await;
     let (token, _csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 
@@ -46,7 +46,7 @@ async fn provider_health_check_requires_csrf_for_post() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
 
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -65,9 +65,9 @@ async fn provider_health_check_validates_required_fields() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "BAD_REQUEST");
+    assert_eq!(json["data"]["error_code"], "BAD_REQUEST");
     assert!(
-        json["error"]
+        json["message"]
             .as_str()
             .is_some_and(|message| message.contains("provider_id is required")),
         "expected provider_id validation error, got {json}"

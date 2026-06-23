@@ -152,6 +152,7 @@ impl ChannelMessageService {
             model: top_level_model,
             source: Some(source),
             channel_chat_id: session.chat_id.clone(),
+            workspace_id: None,
             extra,
         };
 

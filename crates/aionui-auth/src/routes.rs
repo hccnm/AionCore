@@ -10,7 +10,8 @@ use axum::middleware::from_fn_with_state;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use aionui_api_types::{
     ApiResponse, AuthStatusResponse, ChangePasswordRequest, LoginRequest, LoginResponse, PublicUser, QrLoginRequest,
@@ -19,11 +20,14 @@ use aionui_api_types::{
 };
 use aionui_common::ApiError;
 use aionui_common::constants::COOKIE_MAX_AGE_DAYS;
-use aionui_db::{DbError, IUserRepository, models::User};
+use aionui_db::{
+    DbError, IExternalIdentityRepository, IPlatformUserRepository, IRoleRepository, IUserRepository, RoleRow,
+    models::User,
+};
 
 use crate::error::AuthError;
 use crate::extract::extract_token_from_headers;
-use crate::middleware::{AuthState, CurrentUser, auth_middleware};
+use crate::middleware::{AuthState, CurrentUser, GatewayAuthConfig, auth_middleware};
 use crate::password::{dummy_password_hash, generate_password, hash_password, verify_password_timed};
 use crate::qr_token::QrTokenStore;
 use crate::rate_limit::{
@@ -62,9 +66,32 @@ fn db_error_to_api_error(err: DbError) -> ApiError {
 pub struct AuthRouterState {
     pub jwt_service: Arc<JwtService>,
     pub user_repo: Arc<dyn IUserRepository>,
+    pub platform_user_repo: Option<Arc<dyn IPlatformUserRepository>>,
+    pub external_identity_repo: Option<Arc<dyn IExternalIdentityRepository>>,
+    pub role_repo: Option<Arc<dyn IRoleRepository>>,
+    pub gateway_auth: Option<GatewayAuthConfig>,
     pub cookie_config: Arc<CookieConfig>,
     pub qr_token_store: Arc<QrTokenStore>,
     pub local: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CurrentUserContract {
+    id: String,
+    phone: Option<String>,
+    username: String,
+    display_name: Option<String>,
+    roles: Vec<RoleContract>,
+    permission_flags: Vec<String>,
+    is_admin: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RoleContract {
+    id: String,
+    role_key: String,
+    role_name: String,
+    permissions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,12 +160,16 @@ pub fn auth_routes(state: AuthRouterState) -> Router {
     let auth_state = AuthState {
         jwt_service: state.jwt_service.clone(),
         user_repo: state.user_repo.clone(),
+        platform_user_repo: state.platform_user_repo.clone(),
+        external_identity_repo: state.external_identity_repo.clone(),
+        gateway_auth: state.gateway_auth.clone(),
         local: false,
     };
 
     // Auth rate limited routes (login, qr-login)
     let auth_rate_limited = Router::new()
         .route("/login", post(login_handler))
+        .route("/api/auth/login", post(login_handler))
         .route("/api/auth/qr-login", post(qr_login_handler))
         .route_layer(from_fn_with_state(auth_limiter, auth_rate_limit_middleware))
         .with_state(state.clone());
@@ -188,7 +219,9 @@ pub fn auth_routes(state: AuthRouterState) -> Router {
     // route_layer order: last added = outermost (first to process)
     let authenticated = Router::new()
         .route("/logout", post(logout_handler))
+        .route("/api/auth/logout", post(logout_handler))
         .route("/api/auth/user", get(user_handler))
+        .route("/api/auth/me", get(current_user_handler))
         .route("/api/auth/change-password", post(change_password_handler))
         .route("/api/ws-token", get(ws_token_handler))
         .route_layer(from_fn_with_state(
@@ -236,6 +269,10 @@ async fn login_handler(
     }
     if req.password.len() > 128 {
         return Err(ApiError::BadRequest("Password must not exceed 128 characters".into()));
+    }
+
+    if let Some(platform_user_repo) = &state.platform_user_repo {
+        return platform_phone_login(&state, platform_user_repo.clone(), req).await;
     }
 
     // Look up user; run dummy verify on miss to prevent timing attacks
@@ -289,7 +326,60 @@ async fn login_handler(
         token,
     );
 
-    Ok(([(header::SET_COOKIE, cookie)], Json(resp)).into_response())
+    Ok(([(header::SET_COOKIE, cookie)], Json(ApiResponse::ok(resp))).into_response())
+}
+
+async fn platform_phone_login(
+    state: &AuthRouterState,
+    platform_user_repo: Arc<dyn IPlatformUserRepository>,
+    req: LoginRequest,
+) -> Result<Response, ApiError> {
+    let user = platform_user_repo
+        .find_by_phone(&req.username)
+        .await
+        .map_err(db_error_to_api_error)?;
+
+    let (found_user, password_valid) = match user {
+        Some(u) => match u.password_hash.as_deref().filter(|hash| !hash.trim().is_empty()) {
+            Some(hash) => {
+                let valid = verify_password_timed(&req.password, hash).await?;
+                let enabled = u.status == "enabled";
+                (enabled.then_some(u), enabled && valid)
+            }
+            None => {
+                let _ = verify_password_timed(&req.password, dummy_password_hash()).await;
+                (None, false)
+            }
+        },
+        None => {
+            let _ = verify_password_timed(&req.password, dummy_password_hash()).await;
+            (None, false)
+        }
+    };
+
+    if !password_valid {
+        return Err(ApiError::Unauthorized("Invalid phone or password".into()));
+    }
+
+    let user = found_user.ok_or_else(|| ApiError::Unauthorized("Invalid phone or password".into()))?;
+    let username = public_platform_username(
+        user.username.as_deref(),
+        user.phone.as_deref(),
+        user.display_name.as_deref(),
+    );
+    let token = state
+        .jwt_service
+        .sign(&user.id, &username)
+        .map_err(|e| ApiError::Internal(format!("Token signing error: {e}")))?;
+
+    if let Err(e) = platform_user_repo.update_last_login(&user.id).await {
+        tracing::warn!("Failed to update platform user last login for {}: {e}", user.id);
+    }
+
+    let cookie = state.cookie_config.build_session_cookie(&token);
+    let resp = LoginResponse::new(PublicUser { id: user.id, username }, token);
+
+    Ok(([(header::SET_COOKIE, cookie)], Json(ApiResponse::ok(resp))).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -314,30 +404,31 @@ async fn logout_handler(State(state): State<AuthRouterState>, headers: HeaderMap
 async fn status_handler(
     State(state): State<AuthRouterState>,
     headers: HeaderMap,
-) -> Result<Json<AuthStatusResponse>, ApiError> {
-    let has_users = state
-        .user_repo
-        .has_users()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?;
-
-    let user_count = state
-        .user_repo
-        .count_users()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?;
+) -> Result<Json<ApiResponse<AuthStatusResponse>>, ApiError> {
+    let user_count = if let Some(platform_user_repo) = &state.platform_user_repo {
+        platform_user_repo
+            .list_users(10_000, 0)
+            .await
+            .map_err(db_error_to_api_error)?
+            .len() as u64
+    } else {
+        state
+            .user_repo
+            .count_users()
+            .await
+            .map_err(|e| ApiError::Internal(format!("Database error: {e}")))? as u64
+    };
 
     // Check authentication without requiring it
     let is_authenticated = extract_token_from_headers(&headers)
         .and_then(|token| state.jwt_service.verify(&token).ok())
         .is_some();
 
-    Ok(Json(AuthStatusResponse {
-        success: true,
-        needs_setup: !has_users,
-        user_count: user_count as u64,
+    Ok(Json(ApiResponse::ok(AuthStatusResponse {
+        needs_setup: user_count == 0,
+        user_count,
         is_authenticated,
-    }))
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -472,14 +563,94 @@ async fn update_user_last_login_handler(
 // GET /api/auth/user
 // ---------------------------------------------------------------------------
 
-async fn user_handler(Extension(user): Extension<CurrentUser>) -> Json<UserInfoResponse> {
-    Json(UserInfoResponse {
-        success: true,
+async fn user_handler(Extension(user): Extension<CurrentUser>) -> Json<ApiResponse<UserInfoResponse>> {
+    Json(ApiResponse::ok(UserInfoResponse {
         user: PublicUser {
             id: user.id,
             username: user.username,
         },
-    })
+    }))
+}
+
+async fn current_user_handler(
+    State(state): State<AuthRouterState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<ApiResponse<CurrentUserContract>>, ApiError> {
+    let Some(platform_user_repo) = &state.platform_user_repo else {
+        return Ok(Json(ApiResponse::ok(CurrentUserContract {
+            id: user.id,
+            phone: None,
+            username: user.username,
+            display_name: None,
+            roles: Vec::new(),
+            permission_flags: Vec::new(),
+            is_admin: false,
+        })));
+    };
+
+    let row = platform_user_repo
+        .find_by_id(&user.id)
+        .await
+        .map_err(db_error_to_api_error)?
+        .ok_or_else(|| ApiError::Unauthorized("Invalid authentication subject".into()))?;
+    if row.status != "enabled" {
+        return Err(ApiError::Unauthorized("User is disabled".into()));
+    }
+
+    let role_rows = if let Some(role_repo) = &state.role_repo {
+        role_repo
+            .list_user_roles(&user.id)
+            .await
+            .map_err(db_error_to_api_error)?
+    } else {
+        Vec::new()
+    };
+    let active_role_rows = role_rows
+        .into_iter()
+        .filter(|role| role.status == "enabled")
+        .collect::<Vec<_>>();
+    let roles = active_role_rows
+        .iter()
+        .map(|role| RoleContract {
+            id: role.id.clone(),
+            role_key: role.role_key.clone(),
+            role_name: role.role_name.clone(),
+            permissions: permissions_from_role(role),
+        })
+        .collect::<Vec<_>>();
+    let permission_flags = active_role_rows
+        .iter()
+        .flat_map(permissions_from_role)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let is_admin = active_role_rows
+        .iter()
+        .any(|role| role.role_key == "super_admin" || permission_flags.iter().any(|p| p == "*" || p == "admin"));
+
+    Ok(Json(ApiResponse::ok(CurrentUserContract {
+        id: row.id,
+        phone: row.phone,
+        username: public_platform_username(row.username.as_deref(), None, row.display_name.as_deref()),
+        display_name: row.display_name,
+        roles,
+        permission_flags,
+        is_admin,
+    })))
+}
+
+fn public_platform_username(username: Option<&str>, phone: Option<&str>, display_name: Option<&str>) -> String {
+    username.or(phone).or(display_name).unwrap_or("user").to_string()
+}
+
+fn permissions_from_role(role: &RoleRow) -> Vec<String> {
+    match &role.permissions {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +717,7 @@ async fn change_password_handler(
 async fn refresh_handler(
     State(state): State<AuthRouterState>,
     body: Result<Json<RefreshTokenRequest>, JsonRejection>,
-) -> Result<Json<RefreshResponse>, ApiError> {
+) -> Result<Json<ApiResponse<RefreshResponse>>, ApiError> {
     let Json(req) = body.map_err(ApiError::from)?;
 
     let payload = state
@@ -559,10 +730,7 @@ async fn refresh_handler(
         .sign(&payload.user_id, &payload.username)
         .map_err(|e| ApiError::Internal(format!("Token signing error: {e}")))?;
 
-    Ok(Json(RefreshResponse {
-        success: true,
-        token: new_token,
-    }))
+    Ok(Json(ApiResponse::ok(RefreshResponse { token: new_token })))
 }
 
 // ---------------------------------------------------------------------------
@@ -573,26 +741,35 @@ async fn ws_token_handler(
     State(state): State<AuthRouterState>,
     Extension(current_user): Extension<CurrentUser>,
     headers: HeaderMap,
-) -> Result<Json<WsTokenResponse>, ApiError> {
+) -> Result<Json<ApiResponse<WsTokenResponse>>, ApiError> {
     // Reuse the existing session token for WebSocket connections
     let token = extract_token_from_headers(&headers).ok_or_else(|| ApiError::Unauthorized("No token found".into()))?;
 
-    // Ensure user still exists
-    state
-        .user_repo
-        .find_by_id(&current_user.id)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?
-        .ok_or_else(|| ApiError::Unauthorized("User not found".into()))?;
+    if let Some(platform_user_repo) = &state.platform_user_repo {
+        let user = platform_user_repo
+            .find_by_id(&current_user.id)
+            .await
+            .map_err(db_error_to_api_error)?
+            .ok_or_else(|| ApiError::Unauthorized("User not found".into()))?;
+        if user.status != "enabled" {
+            return Err(ApiError::Unauthorized("User is disabled".into()));
+        }
+    } else {
+        state
+            .user_repo
+            .find_by_id(&current_user.id)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Database error: {e}")))?
+            .ok_or_else(|| ApiError::Unauthorized("User not found".into()))?;
+    }
 
     // Cookie max age in milliseconds
     let expires_in = u64::from(COOKIE_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000;
 
-    Ok(Json(WsTokenResponse {
-        success: true,
+    Ok(Json(ApiResponse::ok(WsTokenResponse {
         ws_token: token,
         expires_in,
-    }))
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +812,7 @@ async fn qr_login_handler(
         token,
     );
 
-    Ok(([(header::SET_COOKIE, cookie)], Json(resp)).into_response())
+    Ok(([(header::SET_COOKIE, cookie)], Json(ApiResponse::ok(resp))).into_response())
 }
 
 // ---------------------------------------------------------------------------

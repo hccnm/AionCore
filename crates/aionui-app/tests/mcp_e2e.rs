@@ -37,10 +37,10 @@ async fn connection_test_enoent_command() {
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let json = body_json(resp).await;
-    assert!(!json["success"].as_bool().unwrap());
-    assert_eq!(json["code"], "MCP_COMMAND_NOT_FOUND");
-    assert_eq!(json["details"]["command"], "nonexistent-mcp-command-xyz-12345");
-    assert!(!json["error"].as_str().unwrap().is_empty());
+    assert_ne!(json["code"], 0);
+    assert_eq!(json["data"]["error_code"], "MCP_COMMAND_NOT_FOUND");
+    assert_eq!(json["data"]["command"], "nonexistent-mcp-command-xyz-12345");
+    assert!(!json["message"].as_str().unwrap().is_empty());
 }
 
 // ===========================================================================
@@ -69,10 +69,10 @@ async fn connection_test_unreachable_url() {
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 
     let json = body_json(resp).await;
-    assert!(!json["success"].as_bool().unwrap());
-    assert_eq!(json["code"], "MCP_CONNECTION_FAILED");
-    assert_eq!(json["details"]["transport"], "http");
-    assert!(!json["error"].as_str().unwrap().is_empty());
+    assert_ne!(json["code"], 0);
+    assert_eq!(json["data"]["error_code"], "MCP_CONNECTION_FAILED");
+    assert_eq!(json["data"]["transport"], "http");
+    assert!(!json["message"].as_str().unwrap().is_empty());
 }
 
 // ===========================================================================
@@ -92,7 +92,7 @@ async fn get_agent_configs() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     // In test env, data is an array (may be empty or contain aionui adapter)
     assert!(json["data"].is_array());
 }
@@ -117,7 +117,7 @@ async fn oauth_check_status_unauthenticated_server() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert!(!json["data"]["authenticated"].as_bool().unwrap());
 }
 
@@ -138,7 +138,7 @@ async fn oauth_authenticated_servers_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], json!([]));
 }
 
@@ -162,7 +162,7 @@ async fn oauth_logout_idempotent() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
 }
 
 // ===========================================================================
@@ -182,7 +182,7 @@ async fn unauthenticated_get_servers_rejected() {
     // GET bypasses CSRF; auth middleware returns the canonical auth boundary.
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -202,7 +202,7 @@ async fn unauthenticated_post_server_rejected() {
         ))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // AU-3: Valid token accesses MCP routes successfully
@@ -234,5 +234,5 @@ async fn invalid_token_rejected() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }

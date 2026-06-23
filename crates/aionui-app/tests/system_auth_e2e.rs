@@ -14,7 +14,7 @@ async fn auth_required_get_settings() {
     let resp = app.oneshot(get_request("/api/settings")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -27,7 +27,7 @@ async fn auth_required_patch_settings() {
         .body(Body::from(r#"{"language":"en-US"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -36,7 +36,7 @@ async fn auth_required_get_client_prefs() {
     let resp = app.oneshot(get_request("/api/settings/client")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -49,7 +49,7 @@ async fn auth_required_put_client_prefs() {
         .body(Body::from(r#"{"key":"value"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn auth_required_get_providers() {
     let resp = app.oneshot(get_request("/api/providers")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -73,7 +73,7 @@ async fn auth_required_post_providers() {
         ))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn auth_required_delete_provider() {
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -94,7 +94,7 @@ async fn auth_required_system_info() {
     let resp = app.oneshot(get_request("/api/system/info")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -107,7 +107,7 @@ async fn auth_required_check_update() {
         .body(Body::from(r#"{}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -122,7 +122,7 @@ async fn auth_required_detect_protocol() {
         ))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -135,5 +135,5 @@ async fn auth_required_fetch_models() {
         .body(Body::from(r#"{}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

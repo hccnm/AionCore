@@ -38,7 +38,7 @@ async fn t1_1_create_conversation_success() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let data = &json["data"];
     assert_eq!(data["name"], "Code Review");
     assert_eq!(data["type"], "acp");
@@ -78,7 +78,7 @@ async fn t1_2_create_supported_agent_types_and_reject_legacy_types() {
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "type={agent_type}");
         let json = body_json(resp).await;
-        assert_eq!(json["code"], "BAD_REQUEST");
+        assert_eq!(json["data"]["error_code"], "BAD_REQUEST");
     }
 }
 
@@ -193,10 +193,10 @@ async fn t1_5c_create_rejects_missing_workspace_path() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "WORKSPACE_PATH_UNAVAILABLE");
-    assert_eq!(json["details"]["operation"], "create");
+    assert_eq!(json["data"]["error_code"], "WORKSPACE_PATH_UNAVAILABLE");
+    assert_eq!(json["data"]["operation"], "create");
     assert_eq!(
-        json["details"]["workspace_path"],
+        json["data"]["workspace_path"],
         missing_workspace.to_string_lossy().to_string()
     );
 
@@ -222,7 +222,7 @@ async fn t1_6_create_requires_auth() {
         ))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T2: List ──────────────────────────────────────────────────────────
@@ -389,7 +389,7 @@ async fn t2_6_list_requires_auth() {
     let resp = app.oneshot(get_request("/api/conversations")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ── T3: Get ───────────────────────────────────────────────────────────
@@ -432,7 +432,7 @@ async fn t3_3_get_requires_auth() {
     let resp = app.oneshot(get_request("/api/conversations/some-id")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ── T4: Update ────────────────────────────────────────────────────────
@@ -588,7 +588,7 @@ async fn t4_6_update_requires_auth() {
     let resp = app.oneshot(get_request("/api/conversations/some-id")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ── T5: Delete ────────────────────────────────────────────────────────
@@ -639,7 +639,7 @@ async fn t5_3_delete_requires_auth() {
         .body(axum::body::Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T6: Clone ─────────────────────────────────────────────────────────
@@ -675,7 +675,7 @@ async fn t6_4_clone_requires_auth() {
         .body(axum::body::Body::from(b"{}".to_vec()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T7: Reset ─────────────────────────────────────────────────────────
@@ -763,7 +763,7 @@ async fn t7_3_reset_requires_auth() {
         .body(axum::body::Body::from(b"{}".to_vec()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T10: Associated ───────────────────────────────────────────────────
@@ -850,7 +850,7 @@ async fn t10_4_associated_requires_auth() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ── T12: Boundary scenarios ───────────────────────────────────────────

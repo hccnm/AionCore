@@ -32,6 +32,13 @@ pub trait IUserRepository: Send + Sync {
     /// Returns `DbError::Conflict` if the username already exists.
     async fn create_user(&self, username: &str, password_hash: &str) -> Result<User, DbError>;
 
+    /// Ensures a compatibility user exists with a caller-supplied id.
+    ///
+    /// Used by SaaS-mode product flows that still persist legacy SQLite rows
+    /// with `users(id)` foreign keys while the source-of-truth account lives in
+    /// PostgreSQL.
+    async fn ensure_user_with_id(&self, id: &str, username: &str) -> Result<User, DbError>;
+
     /// Finds a user by username.
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, DbError>;
 

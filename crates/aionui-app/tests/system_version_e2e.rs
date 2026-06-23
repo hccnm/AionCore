@@ -25,7 +25,7 @@ async fn system_info_with_auth() {
     let resp = app.oneshot(get_with_token("/api/system/info", &token)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 
     let data = &json["data"];
     assert!(data["cache_dir"].as_str().is_some_and(|s| !s.is_empty()));

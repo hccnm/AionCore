@@ -24,7 +24,7 @@ async fn create_team(app: &mut axum::Router, token: &str, csrf: &str) -> serde_j
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     json["data"].clone()
 }
 
@@ -143,7 +143,7 @@ async fn tc6b_workspace_with_whitespace_segment_is_accepted() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -163,10 +163,10 @@ async fn tc6c_create_team_rejects_missing_workspace_path() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "WORKSPACE_PATH_UNAVAILABLE");
-    assert_eq!(json["details"]["operation"], "create");
+    assert_eq!(json["data"]["error_code"], "WORKSPACE_PATH_UNAVAILABLE");
+    assert_eq!(json["data"]["operation"], "create");
     assert_eq!(
-        json["details"]["workspace_path"],
+        json["data"]["workspace_path"],
         missing_workspace.to_string_lossy().to_string()
     );
 
@@ -193,7 +193,7 @@ async fn tc7_unauthenticated_returns_401() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // TL-1: Empty team list

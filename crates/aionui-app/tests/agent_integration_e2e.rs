@@ -347,7 +347,7 @@ async fn send_message_with_mock_agent_returns_202() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -382,7 +382,7 @@ async fn stop_stream_with_mock_agent() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -416,7 +416,7 @@ async fn list_confirmations_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].as_array().unwrap().is_empty());
 }
 
@@ -458,7 +458,7 @@ async fn confirm_and_check_approval() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["approved"], true);
 }
 

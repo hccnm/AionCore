@@ -59,7 +59,7 @@ async fn create_job(app: &mut axum::Router, token: &str, csrf: &str, body: serde
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     json["data"].clone()
 }
 
@@ -207,7 +207,7 @@ async fn cj3b_create_accepts_workspace_with_whitespace_segment() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -236,12 +236,9 @@ async fn cj3c_create_rejects_missing_workspace_path() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "WORKSPACE_PATH_UNAVAILABLE");
-    assert_eq!(json["details"]["operation"], "create");
-    assert_eq!(
-        json["details"]["workspace_path"],
-        "/tmp/cron-job-workspace-missing-path"
-    );
+    assert_eq!(json["data"]["error_code"], "WORKSPACE_PATH_UNAVAILABLE");
+    assert_eq!(json["data"]["operation"], "create");
+    assert_eq!(json["data"]["workspace_path"], "/tmp/cron-job-workspace-missing-path");
 
     let list_req = get_with_token("/api/cron/jobs", &token);
     let list_resp = app.oneshot(list_req).await.unwrap();
@@ -346,7 +343,7 @@ async fn cj5b_run_now_legacy_workspace_with_whitespace_succeeds() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -14,6 +14,7 @@ mod remote_agent;
 mod system_settings;
 mod team;
 mod user;
+mod workbench;
 
 pub use acp_session::AcpSessionRow;
 pub use agent_metadata::{AgentMetadataRow, UpdateAgentHandshakeParams, UpsertAgentMetadataParams};
@@ -33,3 +34,9 @@ pub use remote_agent::RemoteAgentRow;
 pub use system_settings::SystemSettings;
 pub use team::{MailboxMessageRow, TeamRow, TeamTaskRow};
 pub use user::User;
+pub use workbench::{
+    AuditLogRow, CreateAuditLogParams, CreateExecutionArtifactParams, CreateExecutionRunParams, CreateGitProjectParams,
+    CreateGitSshCredentialParams, CreatePlatformUserParams, CreateSnapshotParams, CreateWorkspaceParams,
+    ExecutionArtifactRow, ExecutionRunRow, ExternalIdentityRow, GitProjectRow, GitSshCredentialRow, PlatformUserRow,
+    RoleRow, SnapshotRow, UpsertExternalIdentityParams, UpsertRoleParams, WorkspaceRow,
+};

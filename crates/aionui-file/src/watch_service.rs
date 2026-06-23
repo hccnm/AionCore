@@ -115,6 +115,8 @@ impl FileWatchService {
                 }
                 let payload = FileWatchEvent {
                     file_path: path_str,
+                    workspace_id: None,
+                    relative_path: None,
                     event_type: event_type.to_owned(),
                 };
                 let json = serde_json::to_value(&payload).unwrap_or_default();

@@ -294,6 +294,7 @@ impl TeamSessionService {
             model: top_level_model,
             source: None,
             channel_chat_id: None,
+            workspace_id: None,
             extra,
         };
         let conv = self

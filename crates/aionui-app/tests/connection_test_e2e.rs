@@ -20,7 +20,7 @@ async fn t8_1_bedrock_missing_config() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_eq!(json["code"], 400);
 }
 
 #[tokio::test]
@@ -46,8 +46,8 @@ async fn t8_1_bedrock_missing_region() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
-    assert!(json["error"].as_str().unwrap().contains("region"));
+    assert_eq!(json["code"], 400);
+    assert!(json["message"].as_str().unwrap().contains("region"));
 }
 
 #[tokio::test]
@@ -72,7 +72,7 @@ async fn t8_1_bedrock_access_key_missing_key_id() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert!(json["error"].as_str().unwrap().contains("accessKeyId"));
+    assert!(json["message"].as_str().unwrap().contains("accessKeyId"));
 }
 
 #[tokio::test]
@@ -97,7 +97,7 @@ async fn t8_1_bedrock_access_key_missing_secret() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert!(json["error"].as_str().unwrap().contains("secretAccessKey"));
+    assert!(json["message"].as_str().unwrap().contains("secretAccessKey"));
 }
 
 #[tokio::test]
@@ -121,7 +121,7 @@ async fn t8_1_bedrock_profile_missing() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert!(json["error"].as_str().unwrap().contains("profile"));
+    assert!(json["message"].as_str().unwrap().contains("profile"));
 }
 
 #[tokio::test]
@@ -145,8 +145,7 @@ async fn t8_1_bedrock_unauthenticated() {
         ))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    // CSRF middleware returns 403 for POST without CSRF token
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -173,6 +172,11 @@ async fn t8_1_bedrock_invalid_credentials() {
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
-    assert!(json["error"].as_str().unwrap().contains("Bedrock credentials invalid"));
+    assert_eq!(json["code"], 422);
+    assert!(
+        json["message"]
+            .as_str()
+            .unwrap()
+            .contains("Bedrock credentials invalid")
+    );
 }

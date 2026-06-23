@@ -30,7 +30,9 @@ pub use response_middleware::{
     CronCommand, CronCommandResult, CronCreateParams, CronUpdateParams, ICronService, MessageMiddleware,
     MiddlewareResult, detect_cron_commands, has_cron_commands, strip_cron_commands, strip_think_tags,
 };
-pub use routes::conversation_routes;
+pub use routes::{
+    conversation_routes, conversation_routes_without_create, conversation_routes_without_create_or_clone,
+};
 pub use routes_aux::conversation_ops_routes;
 pub use service::ConversationService;
 pub use state::ConversationRouterState;

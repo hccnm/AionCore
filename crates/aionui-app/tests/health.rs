@@ -40,16 +40,15 @@ async fn health_check_returns_ok() {
 }
 
 #[tokio::test]
-async fn health_check_post_blocked_by_csrf() {
+async fn health_check_post_is_method_not_allowed() {
     let app = build_app().await;
 
-    // POST without CSRF token is rejected by the global CSRF middleware
     let response = app
         .oneshot(build_request("POST", "/health"))
         .await
         .expect("request failed");
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]
@@ -64,9 +63,9 @@ async fn unknown_route_returns_not_found() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let json = response_json(response.into_body()).await;
-    assert_eq!(json["success"], false);
-    assert_eq!(json["code"], "NOT_FOUND");
-    assert!(json["error"].is_string());
+    assert_eq!(json["code"], 404);
+    assert!(json["message"].is_string());
+    assert!(json.get("trace_id").is_some());
 }
 
 #[tokio::test]
@@ -88,9 +87,9 @@ async fn default_body_limit_returns_error_response() {
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let json = response_json(response.into_body()).await;
-    assert_eq!(json["success"], false);
-    assert_eq!(json["code"], "PAYLOAD_TOO_LARGE");
-    assert!(json["error"].is_string());
+    assert_eq!(json["code"], 413);
+    assert!(json["message"].is_string());
+    assert!(json.get("trace_id").is_some());
 }
 
 #[tokio::test]

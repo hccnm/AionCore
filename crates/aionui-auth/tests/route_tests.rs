@@ -37,6 +37,10 @@ async fn test_app_with_local(local: bool) -> (Router, TestContext) {
     let state = AuthRouterState {
         jwt_service: jwt_service.clone(),
         user_repo: user_repo.clone(),
+        platform_user_repo: None,
+        external_identity_repo: None,
+        role_repo: None,
+        gateway_auth: None,
         cookie_config,
         qr_token_store: qr_token_store.clone(),
         local,
@@ -129,8 +133,8 @@ async fn login(app: &mut Router, username: &str, password: &str) -> (String, Str
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    let token = json["token"].as_str().unwrap().to_owned();
-    let user_id = json["user"]["id"].as_str().unwrap().to_owned();
+    let token = json["data"]["token"].as_str().unwrap().to_owned();
+    let user_id = json["data"]["user"]["id"].as_str().unwrap().to_owned();
     (token, user_id)
 }
 
@@ -158,14 +162,14 @@ async fn t4_1_login_success() {
     assert!(set_cookie.contains("HttpOnly"));
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert_eq!(json["message"], "Login successful");
-    assert!(json["token"].is_string());
-    assert_eq!(json["user"]["username"], "admin");
-    assert!(json["user"]["id"].is_string());
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["message"], "ok");
+    assert!(json["data"]["token"].is_string());
+    assert_eq!(json["data"]["user"]["username"], "admin");
+    assert!(json["data"]["user"]["id"].is_string());
 
     // Verify the returned token is valid
-    let token = json["token"].as_str().unwrap();
+    let token = json["data"]["token"].as_str().unwrap();
     assert!(ctx.jwt_service.verify(token).is_ok());
 }
 
@@ -178,8 +182,7 @@ async fn t4_2_login_nonexistent_user() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -192,7 +195,7 @@ async fn t4_3_login_wrong_password() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -226,8 +229,7 @@ async fn t4_5_login_empty_password_hash_returns_401() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -274,7 +276,23 @@ async fn t5_1_logout_success() {
     assert!(set_cookie.contains("Max-Age=0"));
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["message"], "Logged out successfully");
+}
+
+#[tokio::test]
+async fn t5_1b_api_auth_logout_alias_success() {
+    let (mut app, ctx) = test_app().await;
+    create_test_user(&ctx, "admin", "StrongP@ss1").await;
+    let (token, _) = login(&mut app, "admin", "StrongP@ss1").await;
+
+    let req = json_post_with_token("/api/auth/logout", "", &token);
+    let resp = app.clone().oneshot(req).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_json(resp).await;
+    assert_eq!(json["code"], 0);
     assert_eq!(json["message"], "Logged out successfully");
 }
 
@@ -294,7 +312,7 @@ async fn t5_2_logout_token_becomes_invalid() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -310,7 +328,7 @@ async fn t5_3_logout_unauthenticated() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 // ===========================================================================
@@ -326,9 +344,9 @@ async fn t6_1_status_needs_setup() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert_eq!(json["needs_setup"], true);
-    assert_eq!(json["is_authenticated"], false);
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["data"]["needs_setup"], false);
+    assert_eq!(json["data"]["is_authenticated"], false);
 }
 
 #[tokio::test]
@@ -341,7 +359,7 @@ async fn t6_2_status_has_users() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["needs_setup"], false);
+    assert_eq!(json["data"]["needs_setup"], false);
 }
 
 #[tokio::test]
@@ -354,7 +372,7 @@ async fn t6_3_status_authenticated() {
     let resp = app.oneshot(req).await.unwrap();
 
     let json = body_json(resp).await;
-    assert_eq!(json["is_authenticated"], true);
+    assert_eq!(json["data"]["is_authenticated"], true);
 }
 
 #[tokio::test]
@@ -365,7 +383,7 @@ async fn t6_4_status_unauthenticated() {
     let resp = app.oneshot(req).await.unwrap();
 
     let json = body_json(resp).await;
-    assert_eq!(json["is_authenticated"], false);
+    assert_eq!(json["data"]["is_authenticated"], false);
 }
 
 // ===========================================================================
@@ -383,9 +401,9 @@ async fn t7_1_get_user_success() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert_eq!(json["user"]["username"], "admin");
-    assert!(json["user"]["id"].is_string());
+    assert_eq!(json["code"], 0);
+    assert_eq!(json["data"]["user"]["username"], "admin");
+    assert!(json["data"]["user"]["id"].is_string());
 }
 
 #[tokio::test]
@@ -397,7 +415,7 @@ async fn t7_2_get_user_invalid_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -409,7 +427,7 @@ async fn t7_3_get_user_no_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 // ===========================================================================
@@ -431,7 +449,7 @@ async fn t8_1_change_password_success() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["message"], "Password changed successfully");
 }
 
@@ -455,7 +473,7 @@ async fn t8_2_change_password_old_token_invalidated() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -473,7 +491,7 @@ async fn t8_3_change_password_wrong_current() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -549,11 +567,11 @@ async fn t9_1_refresh_token_success() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert!(json["token"].is_string());
+    assert_eq!(json["code"], 0);
+    assert!(json["data"]["token"].is_string());
 
     // New token should be valid
-    let new_token = json["token"].as_str().unwrap();
+    let new_token = json["data"]["token"].as_str().unwrap();
     assert!(ctx.jwt_service.verify(new_token).is_ok());
 }
 
@@ -566,7 +584,7 @@ async fn t9_2_refresh_invalid_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -594,12 +612,12 @@ async fn t10_1_ws_token_success() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert!(json["ws_token"].is_string());
-    assert!(json["expires_in"].is_number());
+    assert_eq!(json["code"], 0);
+    assert!(json["data"]["ws_token"].is_string());
+    assert!(json["data"]["expires_in"].is_number());
 
     // expires_in should be 30 days in milliseconds
-    let expires_in = json["expires_in"].as_u64().unwrap();
+    let expires_in = json["data"]["expires_in"].as_u64().unwrap();
     assert_eq!(expires_in, 30 * 24 * 60 * 60 * 1000);
 }
 
@@ -612,7 +630,7 @@ async fn t10_2_ws_token_unauthenticated() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 // ===========================================================================
@@ -644,9 +662,9 @@ async fn t11_1_qr_login_success() {
     assert!(set_cookie.contains("aionui-session="));
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
-    assert!(json["token"].is_string());
-    assert_eq!(json["user"]["username"], "sysadmin");
+    assert_eq!(json["code"], 0);
+    assert!(json["data"]["token"].is_string());
+    assert_eq!(json["data"]["user"]["username"], "sysadmin");
 }
 
 #[tokio::test]
@@ -658,7 +676,7 @@ async fn t11_2_qr_login_invalid_token() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -684,7 +702,7 @@ async fn t11_4_qr_login_already_used() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]

@@ -74,14 +74,13 @@ pub enum ApiError {
     WorkspacePathRuntimeUnavailable(String),
 }
 
-/// Internal error response body matching the `ErrorResponse` format from `aionui-api-types`.
+/// Internal error response body matching the unified REST response envelope.
 #[derive(Serialize)]
 struct ErrorBody {
-    success: bool,
-    error: String,
-    code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<Value>,
+    code: u16,
+    message: String,
+    data: Option<Value>,
+    trace_id: Option<String>,
 }
 
 impl ApiError {
@@ -134,12 +133,17 @@ impl ApiError {
     /// Structured error metadata for clients that need stable machine-readable
     /// context in addition to the top-level error code.
     pub fn error_details(&self) -> Option<Value> {
-        match self {
-            Self::PathOutsideSandbox { field, operation, .. } => Some(path_outside_sandbox_details(*field, *operation)),
-            Self::WorkspacePathUnavailable(path) => Some(workspace_path_details(path, "create")),
-            Self::WorkspacePathRuntimeUnavailable(path) => Some(workspace_path_details(path, "runtime")),
-            _ => None,
+        let mut details = match self {
+            Self::PathOutsideSandbox { field, operation, .. } => path_outside_sandbox_details(*field, *operation),
+            Self::WorkspacePathUnavailable(path) => workspace_path_details(path, "create"),
+            Self::WorkspacePathRuntimeUnavailable(path) => workspace_path_details(path, "runtime"),
+            _ => json!({}),
+        };
+
+        if let Value::Object(map) = &mut details {
+            map.insert("error_code".to_owned(), Value::String(self.error_code().to_owned()));
         }
+        Some(details)
     }
 
     /// Public error message safe to expose to API clients.
@@ -229,10 +233,10 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         let body = ErrorBody {
-            success: false,
-            error: self.public_message(),
-            code: self.error_code().to_owned(),
-            details: self.error_details(),
+            code: status.as_u16(),
+            message: self.public_message(),
+            data: self.error_details(),
+            trace_id: None,
         };
         (status, axum::Json(body)).into_response()
     }
@@ -364,9 +368,10 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["success"], false);
-        assert_eq!(json["error"], "user 42");
-        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["code"], 404);
+        assert_eq!(json["message"], "user 42");
+        assert_eq!(json["data"]["error_code"], "NOT_FOUND");
+        assert!(json.get("trace_id").is_some());
     }
 
     #[tokio::test]
@@ -376,27 +381,24 @@ mod tests {
                 ApiError::Forbidden("Asset path escapes extension root: /tmp/aionui/private/icon.png".into()),
                 StatusCode::FORBIDDEN,
                 "Forbidden.",
-                "FORBIDDEN",
             ),
             (
                 ApiError::Internal("database password leaked in detail".into()),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error.",
-                "INTERNAL_ERROR",
             ),
         ];
 
-        for (error, status, message, code) in cases {
+        for (error, status, message) in cases {
             let resp = error.into_response();
             assert_eq!(resp.status(), status);
 
             let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
             let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-            assert_eq!(json["success"], false);
-            assert_eq!(json["error"], message);
-            assert_eq!(json["code"], code);
-            let public_error = json["error"].as_str().unwrap();
+            assert_eq!(json["code"], status.as_u16());
+            assert_eq!(json["message"], message);
+            let public_error = json["message"].as_str().unwrap();
             assert!(!public_error.contains("/tmp"));
             assert!(!public_error.contains("password"));
             assert!(!public_error.contains("Asset path"));
@@ -411,10 +413,9 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["success"], false);
-        assert_eq!(json["error"], "Rate limited");
-        assert_eq!(json["code"], "RATE_LIMITED");
-        assert!(json.get("details").is_none());
+        assert_eq!(json["code"], 429);
+        assert_eq!(json["message"], "Rate limited");
+        assert_eq!(json["data"]["error_code"], "RATE_LIMITED");
     }
 
     #[test]
@@ -438,9 +439,9 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["code"], "PATH_OUTSIDE_SANDBOX");
-        assert_eq!(json["details"]["field"], "workspace");
-        assert_eq!(json["details"]["operation"], "create");
+        assert_eq!(json["code"], 403);
+        assert_eq!(json["data"]["field"], "workspace");
+        assert_eq!(json["data"]["operation"], "create");
     }
 
     #[test]
@@ -459,10 +460,10 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["code"], "WORKSPACE_PATH_UNAVAILABLE");
-        assert_eq!(json["details"]["field"], "workspace");
-        assert_eq!(json["details"]["workspace_path"], "/tmp/Archive ");
-        assert_eq!(json["details"]["operation"], "create");
+        assert_eq!(json["code"], 400);
+        assert_eq!(json["data"]["field"], "workspace");
+        assert_eq!(json["data"]["workspace_path"], "/tmp/Archive ");
+        assert_eq!(json["data"]["operation"], "create");
     }
 
     #[tokio::test]
@@ -473,10 +474,10 @@ mod tests {
         let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["code"], "WORKSPACE_PATH_RUNTIME_UNAVAILABLE");
-        assert_eq!(json["details"]["field"], "workspace");
-        assert_eq!(json["details"]["workspace_path"], "/tmp/Archive ");
-        assert_eq!(json["details"]["operation"], "runtime");
+        assert_eq!(json["code"], 400);
+        assert_eq!(json["data"]["field"], "workspace");
+        assert_eq!(json["data"]["workspace_path"], "/tmp/Archive ");
+        assert_eq!(json["data"]["operation"], "runtime");
     }
 
     #[test]

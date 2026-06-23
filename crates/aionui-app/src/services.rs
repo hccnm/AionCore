@@ -8,22 +8,48 @@ use aionui_ai_agent::{
     build_agent_factory,
 };
 use aionui_api_types::GuideMcpConfig;
-use aionui_auth::{CookieConfig, JwtService, QrTokenStore, resolve_jwt_secret};
+use aionui_auth::{CookieConfig, GatewayAuthConfig, JwtService, QrTokenStore, hash_password, resolve_jwt_secret};
 use aionui_common::OnConversationDelete;
 use aionui_conversation::runtime_state::ConversationRuntimeStateService;
 use aionui_db::{
-    Database, IAcpSessionRepository, IAgentMetadataRepository, IConversationRepository, IMcpServerRepository,
-    IUserRepository, SqliteAcpSessionRepository, SqliteAgentMetadataRepository, SqliteConversationRepository,
-    SqliteMcpServerRepository, SqliteProviderRepository, SqliteUserRepository,
+    CreatePlatformUserParams, Database, IAcpSessionRepository, IAgentMetadataRepository, IAuditLogRepository,
+    IConversationRepository, IExecutionArtifactRepository, IExecutionRunRepository, IExternalIdentityRepository,
+    IGitProjectRepository, IGitSshCredentialRepository, IMcpServerRepository, IPlatformUserRepository, IRoleRepository,
+    ISnapshotRepository, IUserRepository, IWorkspaceRepository, PgAuditLogRepository, PgExecutionArtifactRepository,
+    PgExecutionRunRepository, PgExternalIdentityRepository, PgGitProjectRepository, PgGitSshCredentialRepository,
+    PgPlatformUserRepository, PgRoleRepository, PgSnapshotRepository, PgWorkspaceRepository, PostgresDatabase,
+    SqliteAcpSessionRepository, SqliteAgentMetadataRepository, SqliteConversationRepository, SqliteMcpServerRepository,
+    SqliteProviderRepository, SqliteUserRepository, UpsertRoleParams,
 };
 use aionui_realtime::{BroadcastEventBus, WebSocketManager};
 use aionui_team::GuideMcpServer;
+use serde_json::{Value, json};
 
-use crate::config::{AppConfig, derive_encryption_key};
+use crate::config::{AppConfig, DeploymentMode, derive_encryption_key};
+
+pub struct WorkbenchRepositories {
+    pub users: Arc<dyn IPlatformUserRepository>,
+    pub external_identities: Arc<dyn IExternalIdentityRepository>,
+    pub roles: Arc<dyn IRoleRepository>,
+    pub git_ssh_credentials: Arc<dyn IGitSshCredentialRepository>,
+    pub git_projects: Arc<dyn IGitProjectRepository>,
+    pub workspaces: Arc<dyn IWorkspaceRepository>,
+    pub snapshots: Arc<dyn ISnapshotRepository>,
+    pub execution_runs: Arc<dyn IExecutionRunRepository>,
+    pub execution_artifacts: Arc<dyn IExecutionArtifactRepository>,
+    pub audit_logs: Arc<dyn IAuditLogRepository>,
+}
+
+const SUPER_ADMIN_ROLE_KEY: &str = "super_admin";
+const DEFAULT_USER_ROLE_KEY: &str = "ordinary_user";
+const ADMIN_PERMISSION: &str = "*";
 
 pub struct AppServices {
     pub database: Database,
+    pub postgres_database: Option<PostgresDatabase>,
+    pub workbench: Option<WorkbenchRepositories>,
     pub jwt_service: Arc<JwtService>,
+    pub gateway_auth: Option<GatewayAuthConfig>,
     pub user_repo: Arc<dyn IUserRepository>,
     pub cookie_config: Arc<CookieConfig>,
     pub qr_token_store: Arc<QrTokenStore>,
@@ -43,6 +69,7 @@ pub struct AppServices {
     pub jwt_secret_raw: String,
     pub data_dir: PathBuf,
     pub work_dir: PathBuf,
+    pub senmo_workspace_root: Option<PathBuf>,
     /// When `true`, skip JWT authentication and use a fixed default user.
     pub local: bool,
     pub app_version: String,
@@ -77,8 +104,11 @@ impl AppServices {
     pub async fn from_config(database: Database, config: &AppConfig) -> anyhow::Result<Self> {
         let data_dir = config.data_dir.clone();
         let work_dir = config.work_dir.clone();
+        let senmo_workspace_root = config.senmo_workspace_root.clone();
         let local = config.local;
         let app_version = config.app_version.clone();
+        let (postgres_database, workbench) = init_platform_repositories(config).await?;
+        let gateway_auth = gateway_auth_config(config);
         let user_repo: Arc<dyn IUserRepository> = Arc::new(SqliteUserRepository::new(database.pool().clone()));
 
         // Resolve JWT secret: env var → system user db field → random generation
@@ -140,7 +170,7 @@ impl AppServices {
 
         // Absolute path to this process's binary. Reused as the `command` for
         // the stdio MCP bridge spawned by ACP CLIs when a team session is
-        // attached to a conversation (phase1 mcp.md §4.6 single-binary model).
+        // attached to a conversation in the single-binary model.
         let backend_binary_path =
             Arc::new(std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("aioncore")));
 
@@ -190,7 +220,10 @@ impl AppServices {
 
         Ok(Self {
             database,
+            postgres_database,
+            workbench,
             jwt_service: Arc::new(JwtService::new(secret.clone())),
+            gateway_auth,
             user_repo,
             cookie_config: Arc::new(CookieConfig::from_env()),
             qr_token_store: Arc::new(QrTokenStore::new()),
@@ -205,6 +238,7 @@ impl AppServices {
             jwt_secret_raw: secret,
             data_dir,
             work_dir,
+            senmo_workspace_root,
             local,
             app_version,
             skill_paths,
@@ -212,6 +246,181 @@ impl AppServices {
             _guide_server: guide_server,
         })
     }
+}
+
+fn gateway_auth_config(config: &AppConfig) -> Option<GatewayAuthConfig> {
+    let app_id = config.gateway_app_id.as_deref()?.trim();
+    let app_secret = config.gateway_app_secret.as_deref()?.trim();
+    if app_id.is_empty() || app_secret.is_empty() {
+        return None;
+    }
+    Some(GatewayAuthConfig {
+        app_id: app_id.to_string(),
+        app_secret: app_secret.to_string(),
+        provider: config.gateway_provider.clone(),
+        timestamp_skew_seconds: config.gateway_timestamp_skew_seconds,
+    })
+}
+
+async fn init_platform_repositories(
+    config: &AppConfig,
+) -> anyhow::Result<(Option<PostgresDatabase>, Option<WorkbenchRepositories>)> {
+    if config.effective_deployment_mode() != DeploymentMode::Saas {
+        return Ok((None, None));
+    }
+
+    let database_url = config
+        .database_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("DEPLOYMENT_MODE=saas requires DATABASE_URL"))?;
+
+    let postgres_database = aionui_db::init_postgres_database_staged(database_url)
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to initialize SaaS PostgreSQL database: {error}"))?;
+    let pool = postgres_database.pool().clone();
+    let repositories = WorkbenchRepositories {
+        users: Arc::new(PgPlatformUserRepository::new(pool.clone())),
+        external_identities: Arc::new(PgExternalIdentityRepository::new(pool.clone())),
+        roles: Arc::new(PgRoleRepository::new(pool.clone())),
+        git_ssh_credentials: Arc::new(PgGitSshCredentialRepository::new(pool.clone())),
+        git_projects: Arc::new(PgGitProjectRepository::new(pool.clone())),
+        workspaces: Arc::new(PgWorkspaceRepository::new(pool.clone())),
+        snapshots: Arc::new(PgSnapshotRepository::new(pool.clone())),
+        execution_runs: Arc::new(PgExecutionRunRepository::new(pool.clone())),
+        execution_artifacts: Arc::new(PgExecutionArtifactRepository::new(pool.clone())),
+        audit_logs: Arc::new(PgAuditLogRepository::new(pool)),
+    };
+
+    seed_senmo_initial_admin(config, &repositories).await?;
+
+    Ok((Some(postgres_database), Some(repositories)))
+}
+
+async fn seed_senmo_initial_admin(config: &AppConfig, repositories: &WorkbenchRepositories) -> anyhow::Result<()> {
+    let Some(phone) = config
+        .senmo_initial_admin_phone
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let password = config
+        .senmo_initial_admin_password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("SENMO_INITIAL_ADMIN_PASSWORD is required when initial admin phone is set"))?;
+    let user = if let Some(existing) = repositories
+        .users
+        .find_by_phone(phone)
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to query initial admin user: {error}"))?
+    {
+        repositories
+            .users
+            .update_status(&existing.id, "enabled")
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to enable initial admin user: {error}"))?;
+        repositories
+            .users
+            .find_by_id(&existing.id)
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to reload initial admin user: {error}"))?
+            .unwrap_or(existing)
+    } else {
+        let password = password.to_owned();
+        let password_hash = tokio::task::spawn_blocking(move || hash_password(&password))
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to join initial admin password hashing task: {error}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to hash initial admin password: {error}"))?;
+        repositories
+            .users
+            .create_user(CreatePlatformUserParams {
+                phone: Some(phone.to_owned()),
+                username: None,
+                display_name: Some("Initial Administrator".to_owned()),
+                email: None,
+                password_hash: Some(password_hash),
+                status: "enabled".to_owned(),
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to create initial admin user: {error}"))?
+    };
+
+    assign_system_roles(repositories, &user.id, true).await
+}
+
+async fn assign_system_roles(
+    repositories: &WorkbenchRepositories,
+    user_id: &str,
+    include_super_admin: bool,
+) -> anyhow::Result<()> {
+    let default_role = ensure_system_role(
+        repositories,
+        UpsertRoleParams {
+            role_key: DEFAULT_USER_ROLE_KEY.to_owned(),
+            role_name: "普通用户".to_owned(),
+            status: "enabled".to_owned(),
+            permissions: Value::Array(vec![Value::String("workspace:own".to_owned())]),
+            sort_order: 1000,
+            is_system: true,
+        },
+        "default user",
+    )
+    .await?;
+    repositories
+        .roles
+        .assign_role(user_id, &default_role.id)
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to assign default user role: {error}"))?;
+
+    if include_super_admin {
+        let admin_role = ensure_system_role(
+            repositories,
+            UpsertRoleParams {
+                role_key: SUPER_ADMIN_ROLE_KEY.to_owned(),
+                role_name: "超级管理员".to_owned(),
+                status: "enabled".to_owned(),
+                permissions: json!([ADMIN_PERMISSION]),
+                sort_order: 0,
+                is_system: true,
+            },
+            "super admin",
+        )
+        .await?;
+        repositories
+            .roles
+            .assign_role(user_id, &admin_role.id)
+            .await
+            .map_err(|error| anyhow::anyhow!("Failed to assign super admin role: {error}"))?;
+    }
+
+    Ok(())
+}
+
+async fn ensure_system_role(
+    repositories: &WorkbenchRepositories,
+    params: UpsertRoleParams,
+    label: &str,
+) -> anyhow::Result<aionui_db::RoleRow> {
+    if let Some(existing) = repositories
+        .roles
+        .list_roles()
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to list roles before seeding {label} role: {error}"))?
+        .into_iter()
+        .find(|role| role.role_key == params.role_key)
+    {
+        return Ok(existing);
+    }
+
+    repositories
+        .roles
+        .upsert_role(params)
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to seed {label} role: {error}"))
 }
 
 #[cfg(test)]
@@ -223,6 +432,9 @@ mod tests {
         let db = aionui_db::init_database_memory().await.unwrap();
         let services = AppServices::from_config(db, &AppConfig::default()).await.unwrap();
 
+        assert!(services.postgres_database.is_none());
+        assert!(services.workbench.is_none());
+
         // JWT service should be functional
         let token = services.jwt_service.sign("test_user", "testuser").unwrap();
         let payload = services.jwt_service.verify(&token).unwrap();
@@ -232,6 +444,59 @@ mod tests {
         let has_users = services.user_repo.has_users().await.unwrap();
         assert!(!has_users); // system user has empty password → not counted
 
+        services.database.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_saas_services_require_database_url() {
+        let db = aionui_db::init_database_memory().await.unwrap();
+        let config = AppConfig {
+            deployment_mode: DeploymentMode::Saas,
+            senmo_workspace_root: Some(tempfile::tempdir().unwrap().path().join("senmo")),
+            ..Default::default()
+        };
+
+        let error = match AppServices::from_config(db.clone(), &config).await {
+            Ok(_) => panic!("SaaS services should require DATABASE_URL"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("DATABASE_URL"));
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn desktop_services_start_without_postgres() {
+        let db = aionui_db::init_database_memory().await.unwrap();
+        let config = AppConfig {
+            deployment_mode: DeploymentMode::Desktop,
+            database_url: None,
+            senmo_workspace_root: None,
+            ..Default::default()
+        };
+
+        let services = AppServices::from_config(db, &config).await.unwrap();
+
+        assert!(services.postgres_database.is_none());
+        assert!(services.workbench.is_none());
+        services.database.close().await;
+    }
+
+    #[tokio::test]
+    async fn local_services_start_without_postgres_even_when_saas_requested() {
+        let db = aionui_db::init_database_memory().await.unwrap();
+        let config = AppConfig {
+            local: true,
+            deployment_mode: DeploymentMode::Saas,
+            database_url: None,
+            senmo_workspace_root: None,
+            ..Default::default()
+        };
+
+        let services = AppServices::from_config(db, &config).await.unwrap();
+
+        assert!(services.postgres_database.is_none());
+        assert!(services.workbench.is_none());
         services.database.close().await;
     }
 

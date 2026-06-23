@@ -23,7 +23,7 @@ async fn list_agents_returns_array() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let body = body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(body["code"], 0);
     assert!(body["data"].is_array());
     let agents = body["data"].as_array().unwrap();
     assert!(agents.iter().any(|a| a["agent_type"] == "aionrs"));
@@ -39,7 +39,7 @@ async fn refresh_agents_returns_array() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let body = body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(body["code"], 0);
     assert!(body["data"].is_array());
 }
 
@@ -62,7 +62,7 @@ async fn test_custom_agent_nonexistent_command() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = common::body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["step"], "fail_cli");
 }
 
@@ -82,7 +82,7 @@ async fn health_check_returns_status() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let body = body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(body["code"], 0);
     // available is a boolean
     assert!(body["data"]["available"].is_boolean());
     // latency should be present
@@ -107,7 +107,7 @@ async fn health_check_unknown_backend_reports_unavailable() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(body["code"], 0);
     assert_eq!(body["data"]["available"], false);
 }
 

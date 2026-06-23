@@ -59,8 +59,8 @@ async fn fs_endpoints_require_auth() {
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(
             resp.status(),
-            StatusCode::FORBIDDEN,
-            "expected 403 for unauthenticated {uri}"
+            StatusCode::UNAUTHORIZED,
+            "expected 401 for unauthenticated {uri}"
         );
     }
 }
@@ -93,7 +93,7 @@ async fn get_files_by_dir_returns_directory_contents() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 
     let data = json["data"].as_array().unwrap();
     assert!(data.len() >= 2, "should contain file + subdir");
@@ -265,7 +265,7 @@ async fn read_file_without_workspace_rejects_non_sandbox_path() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "PATH_OUTSIDE_SANDBOX");
+    assert_eq!(json["data"]["error_code"], "PATH_OUTSIDE_SANDBOX");
 }
 
 #[tokio::test]
@@ -402,7 +402,7 @@ async fn copy_files_to_workspace() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(!json["data"]["copied_files"].as_array().unwrap().is_empty());
 }
 
@@ -605,7 +605,7 @@ async fn watch_stop_all_succeeds() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 // ===========================================================================
@@ -633,7 +633,7 @@ async fn snapshot_init_and_compare_on_plain_dir() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["mode"], "snapshot");
 
     // Get info
@@ -863,7 +863,7 @@ async fn upload_accepts_small_png_and_returns_readable_path() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let path = json["data"].as_str().expect("data should be a string path");
     let p = std::path::Path::new(path);
     assert!(p.is_absolute(), "returned path must be absolute: {path}");
@@ -933,7 +933,7 @@ async fn upload_missing_file_field_returns_400() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -951,7 +951,6 @@ async fn upload_body_exceeding_30mb_returns_413() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
-    assert_eq!(json["code"], "PAYLOAD_TOO_LARGE");
-    assert!(json["error"].is_string());
+    assert_eq!(json["code"], 413);
+    assert!(json["message"].is_string());
 }

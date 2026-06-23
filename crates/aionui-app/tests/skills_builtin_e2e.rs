@@ -118,7 +118,7 @@ async fn builtin_auto_lists_entries_from_embedded_corpus() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let arr = json["data"].as_array().unwrap();
     assert!(arr.len() >= 4, "expected ≥4 auto-inject entries, got {}", arr.len());
     for item in arr {
@@ -153,7 +153,7 @@ async fn builtin_skill_read_auto_inject_returns_frontmatter_content() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let content = json["data"].as_str().unwrap();
     assert!(content.trim_start().starts_with("---"), "content={content}");
 }

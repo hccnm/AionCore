@@ -256,7 +256,7 @@ async fn list_populated_returns_builtins_and_extension() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let list = json["data"].as_array().unwrap();
     // 2 builtins + 1 extension
     assert_eq!(list.len(), 3, "body = {json}");
@@ -280,7 +280,7 @@ async fn list_requires_auth() {
     let resp = fx.app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ===========================================================================

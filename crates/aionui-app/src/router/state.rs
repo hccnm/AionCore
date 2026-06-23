@@ -549,7 +549,7 @@ pub async fn build_channel_state(
 ///
 /// `backend_binary_path` is resolved once in `build_module_states` via
 /// `std::env::current_exe()` and cloned into each builder that needs it,
-/// per `docs/teams/phase1/interface-contracts.md` §10.
+/// following the team interface contract for single-binary startup.
 pub fn build_team_state(
     services: &AppServices,
     cron_service: Option<Arc<aionui_cron::service::CronService>>,

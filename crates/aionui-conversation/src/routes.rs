@@ -53,8 +53,32 @@ impl From<ConversationError> for ApiError {
 ///
 /// All routes require authentication (applied by the caller).
 pub fn conversation_routes(state: ConversationRouterState) -> Router {
-    Router::new()
-        .route("/api/conversations", post(create).get(list))
+    Router::<ConversationRouterState>::new()
+        .route("/api/conversations", post(create))
+        .merge(conversation_routes_without_create_stateful(true))
+        .with_state(state)
+}
+
+/// Build conversation routes without `POST /api/conversations`.
+///
+/// SaaS deployments wrap conversation creation at the app layer so they can
+/// resolve `workspace_id` through the product workspace resolver before
+/// entering the legacy conversation service.
+pub fn conversation_routes_without_create(state: ConversationRouterState) -> Router {
+    conversation_routes_without_create_stateful(true).with_state(state)
+}
+
+/// Build conversation routes without the create or clone-create entrypoints.
+///
+/// SaaS deployments wrap both creation paths at the app layer to enforce the
+/// workspace_id contract.
+pub fn conversation_routes_without_create_or_clone(state: ConversationRouterState) -> Router {
+    conversation_routes_without_create_stateful(false).with_state(state)
+}
+
+fn conversation_routes_without_create_stateful(include_clone: bool) -> Router<ConversationRouterState> {
+    let router = Router::<ConversationRouterState>::new()
+        .route("/api/conversations", get(list))
         .route("/api/conversations/{id}", get(get_one).patch(update).delete(delete_one))
         .route("/api/conversations/{id}/reset", post(reset))
         .route("/api/conversations/{id}/associated", get(associated))
@@ -69,9 +93,13 @@ pub fn conversation_routes(state: ConversationRouterState) -> Router {
         .route("/api/conversations/{id}/confirmations/{callId}/confirm", post(confirm))
         .route("/api/conversations/{id}/approvals/check", get(check_approval))
         .route("/api/conversations/active-count", get(active_count))
-        .route("/api/conversations/clone", post(clone))
-        .route("/api/messages/search", get(search_messages))
-        .with_state(state)
+        .route("/api/messages/search", get(search_messages));
+
+    if include_clone {
+        router.route("/api/conversations/clone", post(clone))
+    } else {
+        router
+    }
 }
 
 // ── Handlers ───────────────────────────────────────────────────────

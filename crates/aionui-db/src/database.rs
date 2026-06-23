@@ -7,7 +7,7 @@ use fs2::FileExt;
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
-use sqlx::{Sqlite, SqlitePool};
+use sqlx::{PgPool, Postgres, Sqlite, SqlitePool};
 use tracing::{info, warn};
 
 use crate::error::DbError;
@@ -26,6 +26,7 @@ const STARTUP_FILE_RETRY_DELAYS: [Duration; 5] = [
 ];
 
 static DB_MIGRATOR: Migrator = sqlx::migrate!();
+static PG_MIGRATOR: Migrator = sqlx::migrate!("./pg_migrations");
 // Historical special-case for the MCP schema reconciliation fallback.
 // Keep this pinned to migration version 7 even as newer migrations land.
 const MCP_SCHEMA_RECONCILIATION_MIGRATION_VERSION: i64 = 7;
@@ -34,6 +35,12 @@ const MCP_SCHEMA_RECONCILIATION_MIGRATION_VERSION: i64 = 7;
 #[derive(Clone, Debug)]
 pub struct Database {
     pool: SqlitePool,
+}
+
+/// Wraps a PostgreSQL connection pool for SaaS deployments.
+#[derive(Clone, Debug)]
+pub struct PostgresDatabase {
+    pool: PgPool,
 }
 
 #[derive(Debug)]
@@ -75,6 +82,18 @@ impl std::error::Error for DatabaseInitError {
 impl Database {
     /// Returns a reference to the underlying connection pool.
     pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    /// Closes all connections in the pool.
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+}
+
+impl PostgresDatabase {
+    /// Returns a reference to the underlying PostgreSQL connection pool.
+    pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 
@@ -142,6 +161,39 @@ pub async fn init_database_memory() -> Result<Database, DbError> {
 
     info!("In-memory database initialized");
     Ok(Database { pool })
+}
+
+/// Initialize a PostgreSQL database for SaaS deployments.
+///
+/// The caller is responsible for requiring this path only when
+/// `DEPLOYMENT_MODE=saas`; desktop/local modes continue to use SQLite.
+pub async fn init_postgres_database(database_url: &str) -> Result<PostgresDatabase, DbError> {
+    init_postgres_database_staged(database_url)
+        .await
+        .map_err(DatabaseInitError::into_source)
+}
+
+pub async fn init_postgres_database_staged(database_url: &str) -> Result<PostgresDatabase, DatabaseInitError> {
+    if database_url.trim().is_empty() {
+        return Err(DatabaseInitError::new(
+            "database.open",
+            DbError::Init("DATABASE_URL is required for SaaS PostgreSQL mode".to_string()),
+        ));
+    }
+
+    let pool = PoolOptions::<Postgres>::new()
+        .max_connections(MAX_CONNECTIONS)
+        .connect(database_url)
+        .await
+        .map_err(|e| DatabaseInitError::new("database.open", DbError::Query(e)))?;
+
+    PG_MIGRATOR
+        .run(&pool)
+        .await
+        .map_err(|e| DatabaseInitError::new("database.migration", DbError::Migration(e)))?;
+
+    info!("PostgreSQL database initialized");
+    Ok(PostgresDatabase { pool })
 }
 
 /// Copy the legacy `aionui.db` to the new target path if the target does not exist.
@@ -611,6 +663,113 @@ async fn align_reconciled_mcp_migration_checksum(conn: &mut sqlx::SqliteConnecti
         .map_err(DbError::Query)?;
 
     Ok(updated.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod postgres_tests {
+    use super::*;
+
+    const WORKBENCH_PG_SCHEMA_SQL: &str = include_str!("../pg_migrations/001_workbench_schema.sql");
+
+    #[tokio::test]
+    async fn init_postgres_database_requires_database_url() {
+        let err = init_postgres_database_staged("").await.unwrap_err();
+
+        assert_eq!(err.stage(), "database.open");
+        assert!(err.to_string().contains("DATABASE_URL is required"));
+    }
+
+    #[test]
+    fn postgres_workbench_migration_is_registered() {
+        let migrations: Vec<_> = PG_MIGRATOR.iter().collect();
+
+        assert_eq!(migrations.len(), 2);
+        assert_eq!(migrations[0].version, 1);
+        assert_eq!(migrations[0].description, "workbench schema");
+        assert_eq!(migrations[1].version, 2);
+        assert_eq!(migrations[1].description, "audit logs actor on delete set null");
+    }
+
+    #[test]
+    fn postgres_workbench_schema_covers_required_domains() {
+        for table in [
+            "users",
+            "external_identities",
+            "roles",
+            "user_roles",
+            "git_ssh_credentials",
+            "git_projects",
+            "workspaces",
+            "snapshots",
+            "execution_runs",
+            "execution_artifacts",
+            "audit_logs",
+        ] {
+            assert!(
+                WORKBENCH_PG_SCHEMA_SQL.contains(&format!("CREATE TABLE IF NOT EXISTS {table}")),
+                "missing required workbench table: {table}"
+            );
+        }
+
+        for index in [
+            "idx_users_phone_unique",
+            "idx_external_identities_user",
+            "idx_roles_status",
+            "idx_git_ssh_credentials_owner",
+            "idx_git_projects_owner",
+            "idx_workspaces_owner",
+            "idx_snapshots_workspace",
+            "idx_execution_runs_workspace",
+            "idx_execution_runs_trace",
+            "idx_execution_artifacts_execution",
+            "idx_audit_logs_trace",
+        ] {
+            assert!(
+                WORKBENCH_PG_SCHEMA_SQL.contains(&format!("CREATE INDEX IF NOT EXISTS {index}"))
+                    || WORKBENCH_PG_SCHEMA_SQL.contains(&format!("CREATE UNIQUE INDEX IF NOT EXISTS {index}")),
+                "missing required workbench index: {index}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn postgres_workbench_migration_runs_when_test_database_url_is_set() {
+        let Ok(database_url) = std::env::var("AION_TEST_POSTGRES_URL") else {
+            eprintln!("skipping real PostgreSQL migration test: AION_TEST_POSTGRES_URL is not set");
+            return;
+        };
+
+        let db = init_postgres_database_staged(&database_url).await.unwrap();
+        let table_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = ANY($1)
+            "#,
+        )
+        .bind(
+            &[
+                "users",
+                "external_identities",
+                "roles",
+                "user_roles",
+                "git_ssh_credentials",
+                "git_projects",
+                "workspaces",
+                "snapshots",
+                "execution_runs",
+                "execution_artifacts",
+                "audit_logs",
+            ][..],
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+
+        assert_eq!(table_count, 11);
+        db.close().await;
+    }
 }
 
 /// Ensure the system default user exists.

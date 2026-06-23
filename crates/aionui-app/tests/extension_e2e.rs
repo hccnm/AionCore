@@ -182,7 +182,7 @@ async fn eq_unauthenticated_access_rejected() {
     let resp = app.oneshot(common::get_request("/api/extensions")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ async fn eq1_get_loaded_extensions_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].is_array());
 }
 
@@ -214,7 +214,7 @@ async fn eq3_get_themes_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -229,7 +229,7 @@ async fn eq4_get_assistants_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -292,7 +292,7 @@ async fn eq8b_get_channel_plugins_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], json!([]));
 }
 
@@ -332,7 +332,7 @@ async fn eq11_get_agent_activity() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ async fn eq12_get_i18n_for_locale() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     // With no extensions loaded, i18n data should be an empty object
     assert!(json["data"].is_object());
 }
@@ -822,7 +822,7 @@ async fn hm1_get_hub_extensions() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     // Empty index → empty array
     assert!(json["data"].is_array());
 }
@@ -845,7 +845,7 @@ async fn hm3_install_nonexistent_returns_error() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let inner = &json["data"];
     assert_eq!(inner["success"], false);
     assert!(inner["msg"].as_str().is_some());
@@ -869,7 +869,7 @@ async fn hm5_check_updates_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].is_array());
 }
 
@@ -886,7 +886,7 @@ async fn sm11_get_skill_paths() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let data = &json["data"];
     assert!(data["user_skills_dir"].is_string());
     assert!(data["builtin_skills_dir"].is_string());
@@ -904,7 +904,7 @@ async fn sm9_detect_paths() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].is_array());
 }
 
@@ -924,7 +924,7 @@ async fn cp1_get_external_paths_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert!(json["data"].is_array());
     assert_eq!(json["data"].as_array().unwrap().len(), 0);
 }
@@ -939,7 +939,7 @@ async fn auth_hub_unauthenticated() {
     let resp = app.oneshot(common::get_request("/api/hub/extensions")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -948,7 +948,7 @@ async fn auth_skills_unauthenticated() {
     let resp = app.oneshot(common::get_request("/api/skills")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ---------------------------------------------------------------------------
@@ -973,7 +973,7 @@ async fn rm1_read_builtin_rule_not_found() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     // File not found → returns empty string (graceful degradation)
     assert_eq!(json["data"], "");
 }
@@ -1003,7 +1003,7 @@ async fn rm2_read_builtin_rule_happy_path_returns_file_content() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], "# Code Review Rules\n\nBe kind.\n");
 }
 
@@ -1025,7 +1025,7 @@ async fn rm3_read_builtin_rule_rejects_path_traversal() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,7 +1050,7 @@ async fn sk1_read_builtin_skill_not_found() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], "");
 }
 
@@ -1079,7 +1079,7 @@ async fn sk2_read_builtin_skill_happy_path_returns_file_content() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"], "## Cowork skills\n\n- git\n- bash\n");
 }
 
@@ -1142,7 +1142,7 @@ async fn si1_read_skill_info_from_directory_path() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["name"], "my-skill");
     assert_eq!(json["data"]["description"], "Handy little thing");
 }
@@ -1174,7 +1174,7 @@ async fn si2_read_skill_info_falls_back_to_directory_name_when_name_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["name"], "fallback-dir");
     assert_eq!(json["data"]["description"], "Empty-name skill");
 }
@@ -1200,7 +1200,7 @@ async fn si3_read_skill_info_returns_not_found_for_missing_path() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,7 +1228,7 @@ async fn sl1_list_skills_tags_builtin_and_custom_with_source_field() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let arr = json["data"].as_array().unwrap();
     assert_eq!(arr.len(), 2);
 
@@ -1280,7 +1280,7 @@ async fn sl3_list_skills_returns_empty_array_when_no_skills() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"].as_array().unwrap().len(), 0);
 }
 
@@ -1308,7 +1308,7 @@ async fn ba1_auto_skills_lists_underscore_builtin_entries() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let arr = json["data"].as_array().unwrap();
     assert_eq!(arr.len(), 2);
     let names: std::collections::HashSet<_> = arr.iter().map(|v| v["name"].as_str().unwrap()).collect();
@@ -1337,7 +1337,7 @@ async fn ba2_auto_skills_returns_empty_array_when_subdir_missing() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"].as_array().unwrap().len(), 0);
 }
 
@@ -1350,7 +1350,7 @@ async fn ba3_auto_skills_unauthenticated_rejected() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ---------------------------------------------------------------------------
@@ -1399,7 +1399,7 @@ async fn de1_detect_external_populates_custom_source_slug() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let arr = json["data"].as_array().expect("data should be an array");
     let custom = arr
         .iter()

@@ -441,6 +441,7 @@ impl JobExecutor {
             model,
             source: None,
             channel_chat_id: None,
+            workspace_id: None,
             extra,
         };
 

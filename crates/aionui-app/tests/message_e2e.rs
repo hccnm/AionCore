@@ -247,7 +247,7 @@ async fn t8_2d_get_message_requires_auth() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -266,9 +266,9 @@ async fn t8_2e_get_message_not_found_returns_specific_error() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     let json = body_json(resp).await;
 
-    assert_eq!(json["code"], "NOT_FOUND");
+    assert_eq!(json["data"]["error_code"], "NOT_FOUND");
     assert!(
-        json["error"]
+        json["message"]
             .as_str()
             .unwrap()
             .contains("Message missing-message not found")
@@ -294,15 +294,15 @@ async fn t8_2f_get_message_does_not_leak_cross_user_conversation() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     let json = body_json(resp).await;
 
-    assert_eq!(json["code"], "NOT_FOUND");
+    assert_eq!(json["data"]["error_code"], "NOT_FOUND");
     assert!(
-        json["error"]
+        json["message"]
             .as_str()
             .unwrap()
             .contains(&format!("Conversation {owner_conv_id} not found"))
     );
-    assert!(!json["error"].as_str().unwrap().contains("owner-tool"));
-    assert!(!json["error"].as_str().unwrap().contains("private output"));
+    assert!(!json["message"].as_str().unwrap().contains("owner-tool"));
+    assert!(!json["message"].as_str().unwrap().contains("private output"));
 }
 
 #[tokio::test]
@@ -374,7 +374,7 @@ async fn t8_6_messages_requires_auth() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -588,7 +588,7 @@ async fn t9_5_search_requires_auth() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 // ── T12.4: SQL injection safety ───────────────────────────────────────
@@ -734,7 +734,7 @@ async fn t2_1_send_message_accepted() {
     if status == StatusCode::ACCEPTED {
         let body: serde_json::Value =
             serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
-        assert!(body["success"].as_bool().unwrap());
+        assert_eq!(body["code"], 0);
         assert!(body["data"]["msg_id"].as_str().is_some_and(|s| !s.is_empty()));
     }
 }
@@ -838,7 +838,7 @@ async fn t2_1_send_message_requires_auth() {
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T2.2: Stop stream ───────────────────────────────────────────────
@@ -870,7 +870,7 @@ async fn t2_2_stop_stream_requires_auth() {
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // ── T2.3: Warmup ────────────────────────────────────────────────────
@@ -923,5 +923,5 @@ async fn t2_3_warmup_requires_auth() {
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

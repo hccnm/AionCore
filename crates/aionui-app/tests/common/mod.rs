@@ -225,7 +225,7 @@ pub fn delete_with_token(uri: &str, token: &str, csrf: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// Set up a user and login, returning (session_token, csrf_token).
+/// Set up a user and login, returning (session_token, legacy_empty_csrf_token).
 ///
 /// The seeded `system_default_user` row already uses `username = "admin"`; if
 /// the test asks for that username, overwrite the seed row's empty credentials
@@ -247,9 +247,6 @@ pub async fn setup_and_login(
         services.user_repo.create_user(username, &hash).await.unwrap();
     }
 
-    let resp = app.clone().oneshot(get_request("/api/auth/status")).await.unwrap();
-    let csrf = extract_csrf_token(&resp).expect("CSRF cookie should be set");
-
     let body = format!(r#"{{"username":"{username}","password":"{password}"}}"#);
     let req = Request::builder()
         .method("POST")
@@ -261,7 +258,7 @@ pub async fn setup_and_login(
     assert_eq!(resp.status(), StatusCode::OK, "login should succeed");
 
     let json = body_json(resp).await;
-    let token = json["token"].as_str().unwrap().to_owned();
+    let token = json["data"]["token"].as_str().unwrap().to_owned();
 
-    (token, csrf)
+    (token, String::new())
 }

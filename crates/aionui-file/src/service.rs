@@ -720,6 +720,7 @@ impl crate::traits::IFileService for FileService {
         let event = ContentUpdateEvent {
             file_path: canonical.to_string_lossy().into_owned(),
             content,
+            workspace_id: None,
             workspace: workspace.to_owned(),
             relative_path,
             operation: ContentUpdateOperation::Write,
@@ -848,6 +849,7 @@ impl crate::traits::IFileService for FileService {
         let event = ContentUpdateEvent {
             file_path: canonical.to_string_lossy().into_owned(),
             content: None,
+            workspace_id: None,
             workspace: workspace.to_owned(),
             relative_path,
             operation: ContentUpdateOperation::Delete,

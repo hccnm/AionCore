@@ -194,14 +194,25 @@ async fn test_connection(
         .error
         .clone()
         .unwrap_or_else(|| "MCP connection test failed".to_string());
-    let code = result
+    let error_code = result
         .code
         .map(McpConnectionTestErrorCode::as_str)
         .unwrap_or("MCP_CONNECTION_FAILED");
+    let mut details = result.details.clone().unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = details.as_object_mut() {
+        object.insert(
+            "error_code".to_owned(),
+            serde_json::Value::String(error_code.to_owned()),
+        );
+    }
 
     Ok((
         status,
-        Json(ErrorResponse::new_with_details(error, code, result.details.clone())),
+        Json(ErrorResponse::new_with_details(
+            error,
+            i32::from(status.as_u16()),
+            details,
+        )),
     )
         .into_response())
 }

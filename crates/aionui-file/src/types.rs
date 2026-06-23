@@ -72,6 +72,8 @@ pub struct ContentUpdateEvent {
     pub file_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     pub workspace: String,
     pub relative_path: String,
     pub operation: ContentUpdateOperation,
@@ -81,6 +83,10 @@ pub struct ContentUpdateEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileWatchEvent {
     pub file_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
     pub event_type: String,
 }
 
@@ -156,6 +162,7 @@ mod tests {
         let event = ContentUpdateEvent {
             file_path: "/ws/src/main.rs".into(),
             content: Some("fn main() {}".into()),
+            workspace_id: None,
             workspace: "/ws".into(),
             relative_path: "src/main.rs".into(),
             operation: ContentUpdateOperation::Write,
@@ -173,6 +180,7 @@ mod tests {
         let event = ContentUpdateEvent {
             file_path: "/ws/old.txt".into(),
             content: None,
+            workspace_id: None,
             workspace: "/ws".into(),
             relative_path: "old.txt".into(),
             operation: ContentUpdateOperation::Delete,
@@ -186,6 +194,8 @@ mod tests {
     fn file_watch_event_serialization() {
         let event = FileWatchEvent {
             file_path: "/path/to/file.txt".into(),
+            workspace_id: None,
+            relative_path: None,
             event_type: "change".into(),
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -216,7 +226,35 @@ mod tests {
         let event: ContentUpdateEvent = serde_json::from_value(raw).unwrap();
         assert_eq!(event.file_path, "/ws/a.txt");
         assert_eq!(event.content.as_deref(), Some("hello"));
+        assert!(event.workspace_id.is_none());
         assert_eq!(event.operation, ContentUpdateOperation::Write);
+    }
+
+    #[test]
+    fn saas_file_events_can_carry_workspace_id_and_relative_path() {
+        let content_update = ContentUpdateEvent {
+            file_path: String::new(),
+            content: Some("hello".into()),
+            workspace_id: Some("ws_1".into()),
+            workspace: String::new(),
+            relative_path: "src/main.rs".into(),
+            operation: ContentUpdateOperation::Write,
+        };
+        let json = serde_json::to_value(&content_update).unwrap();
+        assert_eq!(json["workspace_id"], "ws_1");
+        assert_eq!(json["relative_path"], "src/main.rs");
+        assert!(!json.to_string().contains("/data/senmo"));
+
+        let file_watch = FileWatchEvent {
+            file_path: String::new(),
+            workspace_id: Some("ws_1".into()),
+            relative_path: Some("src/main.rs".into()),
+            event_type: "change".into(),
+        };
+        let json = serde_json::to_value(&file_watch).unwrap();
+        assert_eq!(json["workspace_id"], "ws_1");
+        assert_eq!(json["relative_path"], "src/main.rs");
+        assert!(!json.to_string().contains("/data/senmo"));
     }
 
     #[test]

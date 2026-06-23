@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
@@ -10,11 +10,14 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode}
 use tower::ServiceExt;
 
 use aionui_auth::{
-    AuthState, CookieConfig, CurrentUser, JwtService, RateLimiter, TokenPayload, api_rate_limit_middleware,
-    auth_middleware, auth_rate_limit_middleware, authenticated_action_rate_limit_middleware, csrf_middleware,
-    security_headers_middleware,
+    AuthState, CookieConfig, CurrentUser, GatewayAuthConfig, JwtService, RateLimiter, TokenPayload,
+    api_rate_limit_middleware, auth_middleware, auth_rate_limit_middleware, authenticated_action_rate_limit_middleware,
+    csrf_middleware, gateway_user_signature, security_headers_middleware,
 };
-use aionui_db::{IUserRepository, SqliteUserRepository, init_database_memory};
+use aionui_db::{
+    CreatePlatformUserParams, DbError, ExternalIdentityRow, IExternalIdentityRepository, IPlatformUserRepository,
+    IUserRepository, PlatformUserRow, SqliteUserRepository, UpsertExternalIdentityParams, init_database_memory,
+};
 
 async fn json_body(resp: axum::response::Response) -> serde_json::Value {
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -82,7 +85,7 @@ async fn t12_2_post_without_csrf_token_rejected() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "CSRF_INVALID");
+    assert_eq!(json["code"], 403);
 }
 
 #[tokio::test]
@@ -117,7 +120,7 @@ async fn t12_2_post_with_mismatched_csrf_tokens_rejected() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "CSRF_INVALID");
+    assert_eq!(json["code"], 403);
 }
 
 // ============================================================
@@ -134,12 +137,232 @@ fn protected_auth_app(jwt_service: Arc<JwtService>, user_repo: Arc<dyn IUserRepo
     let state = AuthState {
         jwt_service,
         user_repo,
+        platform_user_repo: None,
+        external_identity_repo: None,
+        gateway_auth: None,
         local: false,
     };
 
     Router::new()
         .route("/protected", get(|| async { "ok" }))
         .route_layer(middleware::from_fn_with_state(state, auth_middleware))
+}
+
+fn gateway_auth_app(
+    platform_user_repo: Arc<dyn IPlatformUserRepository>,
+    external_identity_repo: Arc<dyn IExternalIdentityRepository>,
+    skew: u64,
+) -> Router {
+    let state = AuthState {
+        jwt_service: Arc::new(JwtService::new("gateway_test_secret".into())),
+        user_repo: Arc::new(FakeLegacyUserRepo),
+        platform_user_repo: Some(platform_user_repo),
+        external_identity_repo: Some(external_identity_repo),
+        gateway_auth: Some(GatewayAuthConfig {
+            app_id: "app_aion".into(),
+            app_secret: "secret_123".into(),
+            provider: "modo_open_platform".into(),
+            timestamp_skew_seconds: skew,
+        }),
+        local: false,
+    };
+
+    Router::new()
+        .route("/protected", get(echo_current_user))
+        .route_layer(middleware::from_fn_with_state(state, auth_middleware))
+}
+
+async fn echo_current_user(request: Request<Body>) -> String {
+    let user = request.extensions().get::<CurrentUser>().unwrap();
+    format!("{}:{}", user.id, user.username)
+}
+
+fn gateway_request(signature: &str, secret: &str, timestamp: &str) -> Request<Body> {
+    Request::get("/protected")
+        .header("x-gateway-request-from", "app-gateway")
+        .header("x-gateway-proxy-request", "true")
+        .header("x-gateway-app-id", "app_aion")
+        .header("x-gateway-user-id", "external_u1")
+        .header("x-gateway-timestamp", timestamp)
+        .header("x-gateway-user-id-signature", signature)
+        .header(header::AUTHORIZATION, format!("Bearer {secret}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn current_timestamp() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .to_string()
+}
+
+struct FakeLegacyUserRepo;
+
+#[async_trait::async_trait]
+impl IUserRepository for FakeLegacyUserRepo {
+    async fn has_users(&self) -> Result<bool, DbError> {
+        Ok(true)
+    }
+
+    async fn get_system_user(&self) -> Result<Option<aionui_db::models::User>, DbError> {
+        Ok(None)
+    }
+
+    async fn get_primary_webui_user(&self) -> Result<Option<aionui_db::models::User>, DbError> {
+        Ok(None)
+    }
+
+    async fn set_system_user_credentials(&self, _username: &str, _password_hash: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn create_user(&self, _username: &str, _password_hash: &str) -> Result<aionui_db::models::User, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn ensure_user_with_id(&self, _id: &str, _username: &str) -> Result<aionui_db::models::User, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn find_by_username(&self, _username: &str) -> Result<Option<aionui_db::models::User>, DbError> {
+        Ok(None)
+    }
+
+    async fn find_by_id(&self, _id: &str) -> Result<Option<aionui_db::models::User>, DbError> {
+        Ok(None)
+    }
+
+    async fn list_users(&self) -> Result<Vec<aionui_db::models::User>, DbError> {
+        Ok(Vec::new())
+    }
+
+    async fn count_users(&self) -> Result<i64, DbError> {
+        Ok(0)
+    }
+
+    async fn update_password(&self, _user_id: &str, _password_hash: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_username(&self, _user_id: &str, _username: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_last_login(&self, _user_id: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_jwt_secret(&self, _user_id: &str, _jwt_secret: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+}
+
+struct FakePlatformUserRepo {
+    user: Option<PlatformUserRow>,
+}
+
+#[async_trait::async_trait]
+impl IPlatformUserRepository for FakePlatformUserRepo {
+    async fn create_user(&self, _params: CreatePlatformUserParams) -> Result<PlatformUserRow, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn find_by_id(&self, user_id: &str) -> Result<Option<PlatformUserRow>, DbError> {
+        Ok(self.user.clone().filter(|user| user.id == user_id))
+    }
+
+    async fn find_by_phone(&self, _phone: &str) -> Result<Option<PlatformUserRow>, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_from_sync(
+        &self,
+        _user_id: &str,
+        _phone: Option<&str>,
+        _display_name: Option<&str>,
+        _email: Option<&str>,
+        _status: &str,
+    ) -> Result<PlatformUserRow, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_status(&self, _user_id: &str, _status: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_password_hash(&self, _user_id: &str, _password_hash: Option<&str>) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn update_last_login(&self, _user_id: &str) -> Result<(), DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn list_users(&self, _limit: i64, _offset: i64) -> Result<Vec<PlatformUserRow>, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+}
+
+struct FakeExternalIdentityRepo {
+    identity: Option<ExternalIdentityRow>,
+}
+
+#[async_trait::async_trait]
+impl IExternalIdentityRepository for FakeExternalIdentityRepo {
+    async fn upsert_identity(&self, _params: UpsertExternalIdentityParams) -> Result<ExternalIdentityRow, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+
+    async fn find_identity(
+        &self,
+        provider: &str,
+        app_id: &str,
+        external_user_id: &str,
+    ) -> Result<Option<ExternalIdentityRow>, DbError> {
+        Ok(self.identity.clone().filter(|identity| {
+            identity.provider == provider && identity.app_id == app_id && identity.external_user_id == external_user_id
+        }))
+    }
+
+    async fn list_by_user(&self, _user_id: &str) -> Result<Vec<ExternalIdentityRow>, DbError> {
+        unreachable!("not used by gateway middleware tests")
+    }
+}
+
+fn platform_user(status: &str) -> PlatformUserRow {
+    PlatformUserRow {
+        id: "user_1".into(),
+        phone: Some("13800138000".into()),
+        username: None,
+        display_name: Some("User One".into()),
+        email: None,
+        password_hash: None,
+        avatar_path: None,
+        status: status.into(),
+        jwt_secret: None,
+        created_at: 1,
+        updated_at: 1,
+        last_login: None,
+    }
+}
+
+fn external_identity() -> ExternalIdentityRow {
+    ExternalIdentityRow {
+        id: "ext_1".into(),
+        user_id: "user_1".into(),
+        provider: "modo_open_platform".into(),
+        app_id: "app_aion".into(),
+        external_user_id: "external_u1".into(),
+        phone_snapshot: Some("13800138000".into()),
+        external_role_ids: serde_json::json!([]),
+        is_admin: false,
+        raw_payload: serde_json::json!({}),
+        last_synced_at: 1,
+        created_at: 1,
+        updated_at: 1,
+    }
 }
 
 fn expired_token(jwt_service: &JwtService, secret: &str, user_id: &str, username: &str) -> String {
@@ -174,7 +397,7 @@ async fn auth_middleware_missing_token_returns_unauthorized_code() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -193,7 +416,138 @@ async fn auth_middleware_invalid_token_returns_unauthorized_code() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
+}
+
+#[tokio::test]
+async fn gateway_auth_valid_headers_inject_current_user() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("enabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo {
+            identity: Some(external_identity()),
+        }),
+        300,
+    );
+    let timestamp = current_timestamp();
+    let signature = gateway_user_signature("app_aion", "external_u1", &timestamp, "secret_123");
+
+    let resp = app
+        .oneshot(gateway_request(&signature, "secret_123", &timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), "user_1:13800138000");
+}
+
+#[tokio::test]
+async fn gateway_auth_rejects_invalid_app_secret() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("enabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo {
+            identity: Some(external_identity()),
+        }),
+        300,
+    );
+    let timestamp = current_timestamp();
+    let signature = gateway_user_signature("app_aion", "external_u1", &timestamp, "secret_123");
+
+    let resp = app
+        .oneshot(gateway_request(&signature, "wrong_secret", &timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn gateway_auth_rejects_invalid_signature() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("enabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo {
+            identity: Some(external_identity()),
+        }),
+        300,
+    );
+    let timestamp = current_timestamp();
+
+    let resp = app
+        .oneshot(gateway_request("bad_signature", "secret_123", &timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn gateway_auth_rejects_expired_timestamp() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("enabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo {
+            identity: Some(external_identity()),
+        }),
+        1,
+    );
+    let timestamp = "1";
+    let signature = gateway_user_signature("app_aion", "external_u1", timestamp, "secret_123");
+
+    let resp = app
+        .oneshot(gateway_request(&signature, "secret_123", timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn gateway_auth_rejects_unsynced_user() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("enabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo { identity: None }),
+        300,
+    );
+    let timestamp = current_timestamp();
+    let signature = gateway_user_signature("app_aion", "external_u1", &timestamp, "secret_123");
+
+    let resp = app
+        .oneshot(gateway_request(&signature, "secret_123", &timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn gateway_auth_rejects_disabled_user() {
+    let app = gateway_auth_app(
+        Arc::new(FakePlatformUserRepo {
+            user: Some(platform_user("disabled")),
+        }),
+        Arc::new(FakeExternalIdentityRepo {
+            identity: Some(external_identity()),
+        }),
+        300,
+    );
+    let timestamp = current_timestamp();
+    let signature = gateway_user_signature("app_aion", "external_u1", &timestamp, "secret_123");
+
+    let resp = app
+        .oneshot(gateway_request(&signature, "secret_123", &timestamp))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -215,7 +569,7 @@ async fn auth_middleware_expired_token_returns_unauthorized_code() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -236,7 +590,7 @@ async fn auth_middleware_missing_user_returns_unauthorized_code() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["code"], 401);
 }
 
 #[tokio::test]
@@ -260,9 +614,9 @@ async fn auth_middleware_database_error_returns_internal_error_code() {
 
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let json = json_body(resp).await;
-    assert_eq!(json["code"], "INTERNAL_ERROR");
-    assert_eq!(json["error"], "Internal server error.");
-    let error = json["error"].as_str().unwrap();
+    assert_eq!(json["code"], 500);
+    assert_eq!(json["message"], "Internal server error.");
+    let error = json["message"].as_str().unwrap();
     assert!(!error.contains("Database error"));
     assert!(!error.contains("Authentication service unavailable"));
     assert!(!error.to_ascii_lowercase().contains("closed"));

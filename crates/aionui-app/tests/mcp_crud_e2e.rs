@@ -61,7 +61,7 @@ async fn create_stdio_server() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let json = body_json(resp).await;
-    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["code"], 0);
     let data = &json["data"];
     assert!(data["id"].as_str().unwrap().starts_with("mcp_"));
     assert_eq!(data["name"], "test-mcp");
@@ -340,7 +340,7 @@ async fn update_server_name_is_rejected() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], false);
+    assert_ne!(json["code"], 0);
 }
 
 #[tokio::test]
@@ -671,5 +671,5 @@ async fn unauthenticated_access_is_rejected() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }

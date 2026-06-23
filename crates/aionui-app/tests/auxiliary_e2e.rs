@@ -84,7 +84,7 @@ async fn workspace_browse_requires_auth() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -195,9 +195,9 @@ async fn side_question_requires_auth() {
         .body(axum::body::Body::from(r#"{"question":"test?"}"#))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "CSRF_INVALID");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]
@@ -250,7 +250,7 @@ async fn slash_commands_requires_auth() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let json = body_json(resp).await;
-    assert_eq!(json["code"], "UNAUTHORIZED");
+    assert_eq!(json["data"]["error_code"], "UNAUTHORIZED");
 }
 
 #[tokio::test]

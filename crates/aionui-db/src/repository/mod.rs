@@ -7,6 +7,7 @@ pub mod conversation;
 pub mod cron;
 pub mod mcp_server;
 pub mod oauth_token;
+mod pg_workbench;
 pub mod provider;
 pub mod remote_agent;
 mod settings;
@@ -26,6 +27,7 @@ mod sqlite_team;
 mod sqlite_user;
 pub mod team;
 mod user;
+pub mod workbench;
 
 pub use acp_session::{CreateAcpSessionParams, IAcpSessionRepository, PersistedSessionState, SaveRuntimeStateParams};
 pub use agent_metadata::IAgentMetadataRepository;
@@ -36,6 +38,11 @@ pub use conversation::IConversationRepository;
 pub use cron::ICronRepository;
 pub use mcp_server::IMcpServerRepository;
 pub use oauth_token::IOAuthTokenRepository;
+pub use pg_workbench::{
+    PgAuditLogRepository, PgExecutionArtifactRepository, PgExecutionRunRepository, PgExternalIdentityRepository,
+    PgGitProjectRepository, PgGitSshCredentialRepository, PgPlatformUserRepository, PgRoleRepository,
+    PgSnapshotRepository, PgWorkspaceRepository,
+};
 pub use provider::IProviderRepository;
 pub use remote_agent::IRemoteAgentRepository;
 pub use settings::ISettingsRepository;
@@ -55,3 +62,8 @@ pub use sqlite_team::SqliteTeamRepository;
 pub use sqlite_user::SqliteUserRepository;
 pub use team::ITeamRepository;
 pub use user::IUserRepository;
+pub use workbench::{
+    IAuditLogRepository, IExecutionArtifactRepository, IExecutionRunRepository, IExternalIdentityRepository,
+    IGitProjectRepository, IGitSshCredentialRepository, IPlatformUserRepository, IRoleRepository, ISnapshotRepository,
+    IWorkspaceRepository,
+};

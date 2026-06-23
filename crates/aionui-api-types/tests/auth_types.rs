@@ -53,8 +53,6 @@ fn login_response_serialization_matches_spec() {
     );
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
-    assert_eq!(json["message"], "Login successful");
     assert_eq!(json["user"]["id"], "auth_1712345678_abc");
     assert_eq!(json["user"]["username"], "admin");
     assert_eq!(json["token"], "eyJhbGciOiJIUzI1NiJ9");
@@ -108,14 +106,12 @@ fn qr_login_request_missing_token() {
 #[test]
 fn auth_status_response_needs_setup() {
     let resp = AuthStatusResponse {
-        success: true,
         needs_setup: true,
         user_count: 0,
         is_authenticated: false,
     };
     let json = serde_json::to_value(&resp).unwrap();
 
-    assert_eq!(json["success"], true);
     assert_eq!(json["needs_setup"], true);
     assert_eq!(json["user_count"], 0);
     assert_eq!(json["is_authenticated"], false);
@@ -124,7 +120,6 @@ fn auth_status_response_needs_setup() {
 #[test]
 fn auth_status_response_authenticated() {
     let resp = AuthStatusResponse {
-        success: true,
         needs_setup: false,
         user_count: 2,
         is_authenticated: true,
@@ -139,7 +134,6 @@ fn auth_status_response_authenticated() {
 #[test]
 fn auth_status_response_uses_snake_case_keys() {
     let resp = AuthStatusResponse {
-        success: true,
         needs_setup: false,
         user_count: 1,
         is_authenticated: true,
@@ -158,7 +152,6 @@ fn auth_status_response_uses_snake_case_keys() {
 #[test]
 fn auth_status_response_round_trip() {
     let original = AuthStatusResponse {
-        success: true,
         needs_setup: true,
         user_count: 5,
         is_authenticated: false,
@@ -166,7 +159,6 @@ fn auth_status_response_round_trip() {
     let serialized = serde_json::to_string(&original).unwrap();
     let deserialized: AuthStatusResponse = serde_json::from_str(&serialized).unwrap();
 
-    assert_eq!(deserialized.success, original.success);
     assert_eq!(deserialized.needs_setup, original.needs_setup);
     assert_eq!(deserialized.user_count, original.user_count);
     assert_eq!(deserialized.is_authenticated, original.is_authenticated);

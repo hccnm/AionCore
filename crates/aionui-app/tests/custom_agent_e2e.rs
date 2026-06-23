@@ -91,7 +91,7 @@ async fn custom_agent_full_roundtrip() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     let id = json["data"]["id"].as_str().expect("id in response").to_owned();
     assert_eq!(json["data"]["name"], "My Claude");
     assert_eq!(json["data"]["agent_source"], "custom");
@@ -226,8 +226,8 @@ async fn create_rejects_empty_name() {
 
     let (status, json) = create_agent(&mut app, &token, &csrf, json!({ "name": "", "command": "sh" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(json["success"], false);
-    assert!(json["error"].as_str().unwrap().to_lowercase().contains("name"));
+    assert_ne!(json["code"], 0);
+    assert!(json["message"].as_str().unwrap().to_lowercase().contains("name"));
 }
 
 #[tokio::test]
@@ -237,7 +237,7 @@ async fn create_rejects_empty_command() {
 
     let (status, json) = create_agent(&mut app, &token, &csrf, json!({ "name": "x", "command": "   " })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(json["error"].as_str().unwrap().to_lowercase().contains("command"));
+    assert!(json["message"].as_str().unwrap().to_lowercase().contains("command"));
 }
 
 // ── Bad path: 404 and 403 ─────────────────────────────────────────────────────
@@ -347,9 +347,9 @@ async fn test_on_save_cli_not_found_blocks_upsert() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let err = json["error"].as_str().expect("error string");
-    // ApiError::BadRequest is serialized as "Bad request: <msg>", so we
-    // check that the marker string appears anywhere in the error field.
+    let err = json["message"].as_str().expect("error message");
+    // ApiError::BadRequest exposes the validation message through the unified
+    // envelope message field.
     assert!(
         err.contains("cli_not_found:"),
         "error must carry cli_not_found: marker, got: {err}"

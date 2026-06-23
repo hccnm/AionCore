@@ -4,33 +4,33 @@ use serde::{Deserialize, Serialize};
 
 /// Standard API success response envelope.
 ///
-/// Endpoints that return data wrap it in this structure. For custom
-/// response shapes (login, auth status, etc.), use dedicated types.
+/// All REST endpoints should return this envelope at the HTTP boundary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: i32,
+    pub message: String,
     pub data: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub trace_id: Option<String>,
 }
 
 impl<T> ApiResponse<T> {
     /// Create a success response with data.
     pub fn ok(data: T) -> Self {
         Self {
-            success: true,
+            code: 0,
+            message: "ok".to_owned(),
             data: Some(data),
-            message: None,
+            trace_id: None,
         }
     }
 
     /// Create a success response with data and a message.
     pub fn with_message(data: T, message: impl Into<String>) -> Self {
         Self {
-            success: true,
+            code: 0,
+            message: message.into(),
             data: Some(data),
-            message: Some(message.into()),
+            trace_id: None,
         }
     }
 }
@@ -39,50 +39,47 @@ impl ApiResponse<()> {
     /// Create a success response with only a message (no data payload).
     pub fn message(msg: impl Into<String>) -> Self {
         Self {
-            success: true,
+            code: 0,
+            message: msg.into(),
             data: None,
-            message: Some(msg.into()),
+            trace_id: None,
         }
     }
 
     /// Create a minimal success response (no data, no message).
     pub fn success() -> Self {
         Self {
-            success: true,
+            code: 0,
+            message: "ok".to_owned(),
             data: None,
-            message: None,
+            trace_id: None,
         }
     }
 }
 
 /// Standard API error response.
 ///
-/// Matches the JSON error format used by HTTP boundary renderers:
-/// `{ "success": false, "error": "...", "code": "...", "details": ... }`.
+/// Matches the unified JSON response envelope:
+/// `{ "code": 400, "message": "...", "data": ..., "trace_id": ... }`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorResponse {
-    pub success: bool,
-    pub error: String,
-    pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
+    pub code: i32,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+    pub trace_id: Option<String>,
 }
 
 impl ErrorResponse {
-    pub fn new(error: impl Into<String>, code: impl Into<String>) -> Self {
-        Self::new_with_details(error, code, None)
+    pub fn new(message: impl Into<String>, code: i32) -> Self {
+        Self::new_with_details(message, code, None)
     }
 
-    pub fn new_with_details(
-        error: impl Into<String>,
-        code: impl Into<String>,
-        details: impl Into<Option<serde_json::Value>>,
-    ) -> Self {
+    pub fn new_with_details(message: impl Into<String>, code: i32, data: impl Into<Option<serde_json::Value>>) -> Self {
         Self {
-            success: false,
-            error: error.into(),
-            code: code.into(),
-            details: details.into(),
+            code,
+            message: message.into(),
+            data: data.into(),
+            trace_id: None,
         }
     }
 }
@@ -94,50 +91,52 @@ mod tests {
     #[test]
     fn test_api_response_ok() {
         let resp = ApiResponse::ok(42);
-        assert!(resp.success);
+        assert_eq!(resp.code, 0);
+        assert_eq!(resp.message, "ok");
         assert_eq!(resp.data, Some(42));
-        assert!(resp.message.is_none());
+        assert!(resp.trace_id.is_none());
     }
 
     #[test]
     fn test_api_response_with_message() {
         let resp = ApiResponse::with_message("data", "Created");
-        assert!(resp.success);
+        assert_eq!(resp.code, 0);
         assert_eq!(resp.data, Some("data"));
-        assert_eq!(resp.message.as_deref(), Some("Created"));
+        assert_eq!(resp.message, "Created");
     }
 
     #[test]
     fn test_api_response_message_only() {
         let resp = ApiResponse::message("Done");
-        assert!(resp.success);
+        assert_eq!(resp.code, 0);
         assert!(resp.data.is_none());
-        assert_eq!(resp.message.as_deref(), Some("Done"));
+        assert_eq!(resp.message, "Done");
     }
 
     #[test]
     fn test_api_response_success_minimal() {
         let resp = ApiResponse::success();
-        assert!(resp.success);
+        assert_eq!(resp.code, 0);
         assert!(resp.data.is_none());
-        assert!(resp.message.is_none());
+        assert_eq!(resp.message, "ok");
     }
 
     #[test]
     fn test_api_response_serialization_with_data() {
         let resp = ApiResponse::ok("hello");
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["message"], "ok");
         assert_eq!(json["data"], "hello");
-        assert!(json.get("message").is_none());
+        assert!(json.get("trace_id").is_some());
     }
 
     #[test]
     fn test_api_response_serialization_message_only() {
         let resp = ApiResponse::message("Logged out successfully");
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
-        assert!(json.get("data").is_none());
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["data"], serde_json::Value::Null);
         assert_eq!(json["message"], "Logged out successfully");
     }
 
@@ -145,70 +144,68 @@ mod tests {
     fn test_api_response_serialization_minimal() {
         let resp = ApiResponse::success();
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], true);
-        assert!(json.get("data").is_none());
-        assert!(json.get("message").is_none());
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["message"], "ok");
+        assert_eq!(json["data"], serde_json::Value::Null);
     }
 
     #[test]
     fn test_error_response_new() {
-        let resp = ErrorResponse::new("Not found", "NOT_FOUND");
-        assert!(!resp.success);
-        assert_eq!(resp.error, "Not found");
-        assert_eq!(resp.code, "NOT_FOUND");
-        assert!(resp.details.is_none());
+        let resp = ErrorResponse::new("Not found", 404);
+        assert_eq!(resp.code, 404);
+        assert_eq!(resp.message, "Not found");
+        assert!(resp.data.is_none());
     }
 
     #[test]
     fn test_error_response_serialization() {
-        let resp = ErrorResponse::new("Bad request: missing field", "BAD_REQUEST");
+        let resp = ErrorResponse::new("Bad request: missing field", 400);
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["success"], false);
-        assert_eq!(json["error"], "Bad request: missing field");
-        assert_eq!(json["code"], "BAD_REQUEST");
-        assert!(json.get("details").is_none());
+        assert_eq!(json["code"], 400);
+        assert_eq!(json["message"], "Bad request: missing field");
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("trace_id").is_some());
     }
 
     #[test]
     fn test_error_response_new_with_details() {
         let resp = ErrorResponse::new_with_details(
             "Bad request: invalid workspace",
-            "WORKSPACE_PATH_UNAVAILABLE",
+            400,
             serde_json::json!({ "workspace_path": "/tmp/Archive " }),
         );
         assert_eq!(
-            resp.details,
+            resp.data,
             Some(serde_json::json!({ "workspace_path": "/tmp/Archive " }))
         );
     }
 
     #[test]
     fn test_api_response_deserialization() {
-        let json = r#"{"success":true,"data":"test","message":"ok"}"#;
+        let json = r#"{"code":0,"message":"ok","data":"test","trace_id":null}"#;
         let resp: ApiResponse<String> = serde_json::from_str(json).unwrap();
-        assert!(resp.success);
+        assert_eq!(resp.code, 0);
         assert_eq!(resp.data.as_deref(), Some("test"));
-        assert_eq!(resp.message.as_deref(), Some("ok"));
+        assert_eq!(resp.message, "ok");
     }
 
     #[test]
     fn test_error_response_deserialization() {
-        let json = r#"{"success":false,"error":"Not found","code":"NOT_FOUND"}"#;
+        let json = r#"{"code":404,"message":"Not found","data":null,"trace_id":null}"#;
         let resp: ErrorResponse = serde_json::from_str(json).unwrap();
-        assert!(!resp.success);
-        assert_eq!(resp.error, "Not found");
-        assert_eq!(resp.code, "NOT_FOUND");
-        assert!(resp.details.is_none());
+        assert_eq!(resp.code, 404);
+        assert_eq!(resp.message, "Not found");
+        assert!(resp.data.is_none());
     }
 
     #[test]
     fn test_error_response_with_details() {
         let resp = ErrorResponse::new_with_details(
             "Command not found: npx",
-            "MCP_COMMAND_NOT_FOUND",
+            502,
             Some(serde_json::json!({ "command": "npx" })),
         );
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["details"]["command"], "npx");
+        assert_eq!(json["data"]["command"], "npx");
     }
 }

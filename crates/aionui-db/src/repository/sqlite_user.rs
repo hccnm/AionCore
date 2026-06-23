@@ -108,6 +108,48 @@ impl IUserRepository for SqliteUserRepository {
         })
     }
 
+    async fn ensure_user_with_id(&self, id: &str, username: &str) -> Result<User, DbError> {
+        if let Some(user) = self.find_by_id(id).await? {
+            return Ok(user);
+        }
+
+        let requested_username = username.trim();
+        let fallback_username = id.trim();
+        for candidate in [requested_username, fallback_username] {
+            if candidate.is_empty() {
+                continue;
+            }
+            let now = aionui_common::now_ms();
+            let result = sqlx::query(
+                "INSERT INTO users (id, username, password_hash, created_at, updated_at) \
+                 VALUES (?, ?, '', ?, ?)",
+            )
+            .bind(id)
+            .bind(candidate)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await;
+
+            match result {
+                Ok(_) => {
+                    if let Some(user) = self.find_by_id(id).await? {
+                        return Ok(user);
+                    }
+                }
+                Err(sqlx::Error::Database(db_err)) if is_unique_violation(db_err.as_ref()) => {
+                    if let Some(user) = self.find_by_id(id).await? {
+                        return Ok(user);
+                    }
+                    continue;
+                }
+                Err(error) => return Err(DbError::Query(error)),
+            }
+        }
+
+        Err(DbError::Conflict(format!("Unable to create compatibility user '{id}'")))
+    }
+
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, DbError> {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
             .bind(username)
@@ -306,6 +348,20 @@ mod tests {
 
         let err = repo.create_user("bob", "h2").await.unwrap_err();
         assert!(matches!(err, DbError::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn ensure_user_with_id_creates_compatibility_user() {
+        let (repo, _db) = setup().await;
+
+        let user = repo.ensure_user_with_id("user_platform", "13800138000").await.unwrap();
+        assert_eq!(user.id, "user_platform");
+        assert_eq!(user.username, "13800138000");
+        assert_eq!(user.password_hash, "");
+
+        let again = repo.ensure_user_with_id("user_platform", "renamed").await.unwrap();
+        assert_eq!(again.id, "user_platform");
+        assert_eq!(again.username, "13800138000");
     }
 
     #[tokio::test]

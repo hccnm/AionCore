@@ -33,6 +33,8 @@ pub struct CreateConversationRequest {
     pub model: Option<ProviderWithModel>,
     pub source: Option<ConversationSource>,
     pub channel_chat_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
     pub extra: serde_json::Value,
 }
 

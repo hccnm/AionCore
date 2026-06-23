@@ -20,7 +20,7 @@ async fn settings_get_default_values_with_auth() {
     let resp = app.oneshot(get_with_token("/api/settings", &token)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp).await;
-    assert_eq!(json["success"], true);
+    assert_eq!(json["code"], 0);
     assert_eq!(json["data"]["language"], "en-US");
     assert_eq!(json["data"]["notification_enabled"], true);
 }

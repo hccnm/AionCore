@@ -16,7 +16,7 @@ use common::{build_app, get_with_token, setup_and_login};
 /// `aionui_team::team_routes`. If the team module failed to assemble, the
 /// route would 404 (or compile would have failed earlier).
 #[tokio::test]
-async fn phase1_router_assembles_with_team_module() {
+async fn team_router_assembles_with_team_module() {
     let (mut app, services) = build_app().await;
     let (token, _csrf) = setup_and_login(&mut app, &services, "admin", "StrongP@ss1").await;
 

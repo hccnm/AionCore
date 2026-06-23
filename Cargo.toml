@@ -85,9 +85,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "regis
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "postgres", "json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Auth / Crypto
